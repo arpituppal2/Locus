@@ -62,6 +62,12 @@ PROTECTED_MAC_PATHS = [
 EventHandler = Callable[[dict[str, Any]], None]
 
 
+def _ci_mode() -> bool:
+    return os.getenv("CI", "").strip().lower() in {"1", "true", "yes"} or os.getenv(
+        "GITHUB_ACTIONS", ""
+    ).strip().lower() == "true"
+
+
 def _venv_python() -> Path:
     return VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
@@ -363,6 +369,13 @@ def full_disk_access_status() -> dict[str, Any]:
             "available": False,
             "action": "none",
         }
+    if _ci_mode():
+        return {
+            "state": "warning",
+            "detail": "skipped on CI; approve Full Disk Access on a real Mac when needed",
+            "available": False,
+            "action": "open_full_disk_access",
+        }
 
     checked = 0
     blocked: list[str] = []
@@ -443,6 +456,13 @@ def accessibility_status() -> dict[str, Any]:
             "detail": "unsupported OS; Locus supports macOS and Windows",
             "available": False,
             "action": "none",
+        }
+    if _ci_mode():
+        return {
+            "state": "warning",
+            "detail": "skipped on CI; approve Accessibility on a real Mac for shortcuts and app control",
+            "available": False,
+            "action": "open_accessibility",
         }
     try:
         result = subprocess.run(
