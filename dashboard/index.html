@@ -131,44 +131,50 @@
     }
 
     .brand-mark {
-      width: 24px;
-      height: 24px;
-      border: 1px solid color-mix(in srgb, var(--color-primary-2) 52%, var(--color-border));
-      border-radius: 8px;
-      position: relative;
-      background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
-      box-shadow: 0 0 18px var(--color-ambient), inset 0 0 16px color-mix(in srgb, var(--color-primary) 16%, transparent);
+      width: 31px;
+      height: 31px;
+      flex: 0 0 auto;
+      overflow: visible;
       animation: lotusPulse 3.8s ease-in-out infinite;
-      overflow: hidden;
+      filter:
+        drop-shadow(0 0 10px color-mix(in srgb, var(--color-primary) 45%, transparent))
+        drop-shadow(0 0 20px color-mix(in srgb, var(--color-primary-2) 24%, transparent));
     }
 
-    .brand-mark::before,
-    .brand-mark::after {
-      content: "";
-      position: absolute;
-      width: 8px;
-      height: 14px;
-      left: 8px;
-      top: 4px;
-      border-radius: 999px 999px 999px 999px / 70% 70% 40% 40%;
-      background: var(--color-primary-2);
-      box-shadow:
-        -6px 6px 0 -1px color-mix(in srgb, var(--color-primary) 88%, white),
-        6px 6px 0 -1px color-mix(in srgb, var(--color-accent) 86%, white);
-      transform-origin: 50% 100%;
+    .brand-mark .petal {
+      stroke: color-mix(in srgb, white 66%, var(--color-primary-2));
+      stroke-width: 1.15;
+      stroke-linejoin: round;
     }
 
-    .brand-mark::before {
-      transform: translateY(1px) scaleY(1.04);
+    .brand-mark .petal-center { fill: #f3d3ff; }
+    .brand-mark .petal-mid { fill: #d8b4fe; }
+    .brand-mark .petal-side { fill: #c084fc; }
+    .brand-mark .petal-low { fill: #a78bfa; }
+
+    .brand-mark .lotus-core {
+      fill: #fff7b8;
+      stroke: rgba(255, 255, 255, 0.82);
+      stroke-width: 0.9;
     }
 
-    .brand-mark::after {
-      width: 7px;
-      height: 9px;
-      left: 8.5px;
-      top: 12px;
-      background: #fff3b0;
-      box-shadow: 0 0 14px color-mix(in srgb, var(--color-primary-2) 72%, transparent);
+    .brand-mark .lotus-stem,
+    .brand-mark .lotus-water {
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .brand-mark .lotus-stem {
+      stroke: color-mix(in srgb, var(--color-primary-2) 78%, white);
+      stroke-width: 1.6;
+      opacity: 0.82;
+    }
+
+    .brand-mark .lotus-water {
+      stroke: color-mix(in srgb, var(--color-accent) 60%, var(--color-primary-2));
+      stroke-width: 1.35;
+      opacity: 0.76;
     }
 
     .header-actions {
@@ -492,13 +498,15 @@
       position: fixed;
       inset: 0;
       z-index: 50;
-      place-items: center;
-      padding: 28px;
+      place-items: stretch;
+      padding: clamp(22px, 5vw, 64px);
       background:
-        linear-gradient(150deg, color-mix(in srgb, var(--color-bg) 58%, var(--color-primary) 42%), var(--color-bg) 46%, color-mix(in srgb, var(--color-bg) 70%, var(--color-primary-2) 30%));
-      backdrop-filter: blur(30px) saturate(145%);
-      -webkit-backdrop-filter: blur(30px) saturate(145%);
-      overflow: hidden;
+        radial-gradient(circle at 50% 78%, color-mix(in srgb, var(--color-primary-2) 20%, transparent), transparent 34%),
+        radial-gradient(circle at 20% 8%, color-mix(in srgb, var(--color-primary) 18%, transparent), transparent 32%),
+        linear-gradient(180deg, color-mix(in srgb, var(--color-bg) 18%, transparent), color-mix(in srgb, var(--color-bg) 42%, transparent));
+      backdrop-filter: blur(11px) saturate(152%);
+      -webkit-backdrop-filter: blur(11px) saturate(152%);
+      overflow-y: auto;
       isolation: isolate;
     }
 
@@ -513,22 +521,24 @@
 
     .setup-panel::before {
       background:
-        radial-gradient(ellipse at 50% 86%, color-mix(in srgb, var(--color-primary-2) 24%, transparent), transparent 44%),
-        linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--color-primary) 18%, transparent) 48%, transparent 82%),
-        repeating-linear-gradient(180deg, transparent 0 28px, color-mix(in srgb, var(--color-primary) 8%, transparent) 29px 30px);
-      opacity: 0.45;
-      transform: translateX(-28%);
-      animation: overlaySweep 7s ease-in-out infinite;
+        radial-gradient(ellipse 22% 58% at 50% 82%, color-mix(in srgb, var(--color-primary-2) 34%, transparent), transparent 67%),
+        radial-gradient(ellipse 18% 54% at 38% 78%, color-mix(in srgb, var(--color-primary) 30%, transparent), transparent 69%),
+        radial-gradient(ellipse 18% 54% at 62% 78%, color-mix(in srgb, var(--color-accent) 20%, transparent), transparent 69%),
+        linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--color-primary) 16%, transparent) 52%, transparent 100%);
+      filter: blur(18px);
+      opacity: 0.74;
+      transform: translateX(-3%) scale(1.02);
+      animation: overlaySweep 8s ease-in-out infinite;
     }
 
     .setup-panel::after {
-      inset: 18px;
-      border: 1px solid color-mix(in srgb, var(--color-primary) 26%, transparent);
-      border-radius: 28px;
-      box-shadow:
-        inset 0 0 70px color-mix(in srgb, var(--color-primary) 10%, transparent),
-        0 0 110px color-mix(in srgb, var(--color-primary) 16%, transparent);
-      opacity: 0.88;
+      background:
+        repeating-linear-gradient(90deg, transparent 0 38px, color-mix(in srgb, var(--color-primary) 6%, transparent) 39px 40px),
+        linear-gradient(110deg, transparent 0 28%, color-mix(in srgb, var(--color-primary-2) 12%, transparent) 46%, transparent 66% 100%);
+      mix-blend-mode: screen;
+      opacity: 0.42;
+      transform: translateX(-15%);
+      animation: setupScan 6.4s ease-in-out infinite;
     }
 
     .setup-panel.show {
@@ -537,58 +547,79 @@
     }
 
     .setup-card {
-      width: min(900px, 100%);
-      max-height: min(760px, calc(100vh - 48px));
-      overflow: hidden;
-      background: color-mix(in srgb, var(--color-surface) 48%, transparent);
-      border: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
-      border-radius: 22px;
-      box-shadow: 0 28px 90px rgba(0, 0, 0, 0.32), 0 0 95px var(--color-ambient);
+      width: min(1120px, 100%);
+      min-height: 100%;
+      justify-self: center;
+      display: grid;
+      align-content: center;
+      gap: clamp(14px, 2.5vw, 28px);
+      padding: clamp(8px, 1.4vw, 18px) 0;
+      overflow: visible;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
       position: relative;
-      backdrop-filter: blur(24px) saturate(135%);
-      -webkit-backdrop-filter: blur(24px) saturate(135%);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
       animation: setupLift 520ms cubic-bezier(.2, .8, .2, 1) both;
     }
 
     .setup-card::before {
       content: "";
       position: absolute;
-      inset: 0;
+      width: min(760px, 76vw);
+      height: min(460px, 42vh);
+      left: 50%;
+      bottom: 2%;
       pointer-events: none;
+      border-radius: 50% 50% 12% 12%;
       background:
-        linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-primary) 16%, transparent), transparent);
-      transform: translateX(-100%);
-      animation: setupScan 3.8s ease-in-out infinite;
+        radial-gradient(ellipse at 50% 82%, color-mix(in srgb, var(--color-primary-2) 30%, transparent), transparent 55%),
+        radial-gradient(ellipse at 32% 72%, color-mix(in srgb, var(--color-primary) 22%, transparent), transparent 62%),
+        radial-gradient(ellipse at 68% 72%, color-mix(in srgb, var(--color-accent) 18%, transparent), transparent 62%);
+      filter: blur(32px);
+      opacity: 0.7;
+      transform: translateX(-50%);
+      z-index: -1;
+      animation: setupPetalGlow 7s ease-in-out infinite;
     }
 
     .setup-top {
       display: grid;
       grid-template-columns: 1fr auto;
-      gap: 12px;
-      align-items: center;
-      padding: 12px 14px;
-      border-bottom: 1px solid color-mix(in srgb, var(--color-border) 62%, transparent);
+      gap: clamp(12px, 2vw, 28px);
+      align-items: end;
+      padding: 0;
+      border-bottom: 0;
       position: relative;
       z-index: 1;
     }
 
     .setup-title {
-      font-size: 16px;
+      max-width: 800px;
+      font-size: clamp(42px, 8vw, 96px);
+      line-height: 0.92;
       letter-spacing: 0;
-      text-transform: uppercase;
       color: var(--color-text);
-      font-weight: 700;
+      font-weight: 780;
+      text-shadow:
+        0 0 20px color-mix(in srgb, var(--color-primary-2) 40%, transparent),
+        0 0 64px color-mix(in srgb, var(--color-primary) 30%, transparent);
     }
 
     .setup-summary {
-      margin-top: 4px;
-      color: var(--color-muted);
-      font-size: 12px;
+      max-width: 680px;
+      margin-top: 16px;
+      color: color-mix(in srgb, var(--color-text) 84%, var(--color-muted));
+      font-size: clamp(14px, 1.7vw, 18px);
+      line-height: 1.45;
+      text-shadow: 0 0 28px rgba(255, 255, 255, 0.12);
     }
 
     .setup-wizard {
       display: none;
-      padding: 12px 14px 0;
+      padding: 0;
       position: relative;
       z-index: 1;
     }
@@ -602,49 +633,71 @@
       align-items: baseline;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 10px;
-      color: var(--color-muted);
-      font-size: 11px;
+      margin-bottom: 14px;
+      color: color-mix(in srgb, var(--color-text) 72%, var(--color-muted));
+      font-size: 12px;
+      text-shadow: 0 0 18px color-mix(in srgb, var(--color-primary) 28%, transparent);
     }
 
     .setup-wizard-title {
-      color: var(--color-text);
-      font-size: 13px;
+      color: color-mix(in srgb, var(--color-primary-2) 84%, white);
+      font-size: 12px;
       font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
 
     .setup-wizard-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px 24px;
     }
 
     .wizard-step {
-      border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
-      background: color-mix(in srgb, var(--color-surface-2) 54%, transparent);
-      border-radius: 8px;
-      padding: 10px;
+      border: 0;
+      border-left: 1px solid color-mix(in srgb, var(--color-primary) 34%, transparent);
+      background: transparent;
+      border-radius: 0;
+      padding: 7px 0 7px 14px;
       min-width: 0;
+      position: relative;
     }
 
-    .wizard-step.done { border-color: color-mix(in srgb, var(--color-success) 55%, var(--color-border)); }
-    .wizard-step.warning { border-color: color-mix(in srgb, var(--color-warning) 62%, var(--color-border)); }
-    .wizard-step.error { border-color: color-mix(in srgb, var(--color-error) 62%, var(--color-border)); }
+    .wizard-step::before {
+      content: "";
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      left: -3px;
+      top: 13px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--color-primary-2) 72%, white);
+      box-shadow: 0 0 18px color-mix(in srgb, var(--color-primary) 68%, transparent);
+    }
+
+    .wizard-step.done { border-left-color: color-mix(in srgb, var(--color-success) 72%, white); }
+    .wizard-step.warning { border-left-color: color-mix(in srgb, var(--color-warning) 72%, white); }
+    .wizard-step.error { border-left-color: color-mix(in srgb, var(--color-error) 72%, white); }
+    .wizard-step.done::before { background: var(--color-success); box-shadow: 0 0 18px color-mix(in srgb, var(--color-success) 68%, transparent); }
+    .wizard-step.warning::before { background: var(--color-warning); box-shadow: 0 0 18px color-mix(in srgb, var(--color-warning) 68%, transparent); }
+    .wizard-step.error::before { background: var(--color-error); box-shadow: 0 0 18px color-mix(in srgb, var(--color-error) 68%, transparent); }
 
     .wizard-step-title {
       color: var(--color-text);
       font-size: 12px;
       font-weight: 700;
+      text-shadow: 0 0 16px color-mix(in srgb, var(--color-primary-2) 24%, transparent);
     }
 
     .wizard-step-detail,
     .wizard-step-list,
     .wizard-step-action {
       margin-top: 5px;
-      color: var(--color-muted);
+      color: color-mix(in srgb, var(--color-text) 70%, var(--color-muted));
       font-size: 10.5px;
       line-height: 1.35;
       overflow-wrap: anywhere;
+      text-shadow: 0 0 18px color-mix(in srgb, var(--color-bg) 85%, transparent);
     }
 
     .wizard-step-list {
@@ -656,59 +709,73 @@
     }
 
     .setup-run {
-      border: 1px solid var(--color-border);
-      background: var(--color-surface-2);
+      border: 1px solid color-mix(in srgb, var(--color-primary-2) 42%, transparent);
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--color-primary-2) 22%, transparent), color-mix(in srgb, var(--color-surface-2) 44%, transparent));
       color: var(--color-text);
-      border-radius: 8px;
-      padding: 8px 12px;
+      border-radius: 999px;
+      padding: 10px 16px;
       cursor: pointer;
       font-size: 13px;
       white-space: nowrap;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.16),
+        0 0 28px color-mix(in srgb, var(--color-primary) 22%, transparent);
+      backdrop-filter: blur(18px) saturate(145%);
+      -webkit-backdrop-filter: blur(18px) saturate(145%);
     }
 
-    .setup-run:hover { border-color: var(--color-primary); }
+    .setup-run:hover {
+      border-color: color-mix(in srgb, var(--color-primary-2) 80%, white);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.22),
+        0 0 42px color-mix(in srgb, var(--color-primary-2) 30%, transparent);
+    }
     .setup-run:disabled { opacity: 0.55; cursor: default; }
 
     .setup-steps {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-      padding: 14px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px 28px;
+      padding: 0;
       position: relative;
       z-index: 1;
     }
 
     .setup-group-title {
       grid-column: 1 / -1;
-      color: var(--color-muted);
+      color: color-mix(in srgb, var(--color-primary-2) 78%, white);
       font-size: 10px;
       font-weight: 700;
       letter-spacing: 0.08em;
       text-transform: uppercase;
-      margin-top: 4px;
+      margin-top: 8px;
+      padding-top: 6px;
+      text-shadow: 0 0 18px color-mix(in srgb, var(--color-primary) 30%, transparent);
     }
 
     .setup-step {
-      border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
-      background: color-mix(in srgb, var(--color-surface-2) 72%, transparent);
-      border-radius: 8px;
-      padding: 9px 9px 9px 23px;
-      min-height: 82px;
+      border: 0;
+      border-left: 1px solid color-mix(in srgb, var(--color-primary) 34%, transparent);
+      background: transparent;
+      border-radius: 0;
+      padding: 6px 0 6px 18px;
+      min-height: 74px;
       min-width: 0;
-      transition: border-color 180ms ease, transform 180ms ease, background 180ms ease;
+      transition: border-color 180ms ease, transform 180ms ease, text-shadow 180ms ease;
       position: relative;
     }
 
     .setup-step::before {
       content: "";
       position: absolute;
-      width: 7px;
-      height: 7px;
-      left: 9px;
-      top: 13px;
+      width: 8px;
+      height: 8px;
+      left: -4px;
+      top: 12px;
       border-radius: 999px;
-      background: var(--color-muted);
-      box-shadow: 0 0 0 transparent;
+      background: color-mix(in srgb, var(--color-primary-2) 54%, white);
+      box-shadow: 0 0 18px color-mix(in srgb, var(--color-primary) 50%, transparent);
     }
 
     .setup-step.running {
@@ -716,14 +783,14 @@
       transform: translateY(-1px);
     }
 
-    .setup-step.running { border-color: var(--color-warning); }
-    .setup-step.done { border-color: color-mix(in srgb, var(--color-success) 65%, var(--color-border)); }
-    .setup-step.error { border-color: var(--color-error); }
-    .setup-step.warning { border-color: var(--color-warning); }
+    .setup-step.running { border-left-color: var(--color-warning); }
+    .setup-step.done { border-left-color: color-mix(in srgb, var(--color-success) 76%, white); }
+    .setup-step.error { border-left-color: var(--color-error); }
+    .setup-step.warning { border-left-color: var(--color-warning); }
     .setup-step.running::before { background: var(--color-warning); box-shadow: 0 0 16px color-mix(in srgb, var(--color-warning) 58%, transparent); }
-    .setup-step.done::before { background: var(--color-success); }
-    .setup-step.error::before { background: var(--color-error); }
-    .setup-step.warning::before { background: var(--color-warning); }
+    .setup-step.done::before { background: var(--color-success); box-shadow: 0 0 16px color-mix(in srgb, var(--color-success) 58%, transparent); }
+    .setup-step.error::before { background: var(--color-error); box-shadow: 0 0 16px color-mix(in srgb, var(--color-error) 58%, transparent); }
+    .setup-step.warning::before { background: var(--color-warning); box-shadow: 0 0 16px color-mix(in srgb, var(--color-warning) 58%, transparent); }
 
     .setup-step-title {
       color: var(--color-text);
@@ -732,15 +799,17 @@
       overflow: hidden;
       text-overflow: clip;
       white-space: normal;
+      text-shadow: 0 0 18px color-mix(in srgb, var(--color-primary-2) 24%, transparent);
     }
 
     .setup-step-meta {
       margin-top: 3px;
-      color: var(--color-muted);
+      color: color-mix(in srgb, var(--color-text) 72%, var(--color-muted));
       font-size: 11px;
       line-height: 1.35;
       overflow-wrap: anywhere;
       white-space: normal;
+      text-shadow: 0 0 18px color-mix(in srgb, var(--color-bg) 86%, transparent);
     }
 
     .setup-step-action,
@@ -752,24 +821,25 @@
     }
 
     .setup-step-action {
-      color: var(--color-text);
+      color: color-mix(in srgb, var(--color-primary-2) 86%, white);
     }
 
     .setup-step-help {
-      color: color-mix(in srgb, var(--color-muted) 82%, var(--color-text));
+      color: color-mix(in srgb, var(--color-muted) 72%, var(--color-text));
     }
 
     .setup-log {
       display: none;
-      max-height: 110px;
+      max-height: 140px;
       overflow-y: auto;
-      padding: 0 14px 12px;
-      color: var(--color-muted);
+      padding: 2px 0 0;
+      color: color-mix(in srgb, var(--color-text) 68%, var(--color-muted));
       font-family: "Geist Mono", ui-monospace, monospace;
       font-size: 11px;
       line-height: 1.5;
       position: relative;
       z-index: 1;
+      text-shadow: 0 0 18px color-mix(in srgb, var(--color-primary) 18%, transparent);
     }
 
     .setup-log.show { display: block; }
@@ -777,7 +847,7 @@
     .setup-actions {
       display: none;
       gap: 8px;
-      padding: 0 14px 14px;
+      padding: 0;
       position: relative;
       z-index: 1;
       flex-wrap: wrap;
@@ -786,16 +856,20 @@
     .setup-actions.show { display: flex; }
 
     .setup-secondary {
-      border: 1px solid var(--color-border);
-      background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
+      border: 1px solid color-mix(in srgb, var(--color-primary) 34%, transparent);
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 16%, transparent), color-mix(in srgb, var(--color-surface-2) 34%, transparent));
       color: var(--color-text);
-      border-radius: 8px;
-      padding: 8px 10px;
+      border-radius: 999px;
+      padding: 8px 12px;
       cursor: pointer;
       font-size: 12px;
+      box-shadow: 0 0 18px color-mix(in srgb, var(--color-primary) 16%, transparent);
+      backdrop-filter: blur(16px) saturate(145%);
+      -webkit-backdrop-filter: blur(16px) saturate(145%);
     }
 
-    .setup-secondary:hover { border-color: var(--color-primary); }
+    .setup-secondary:hover { border-color: color-mix(in srgb, var(--color-primary-2) 74%, white); }
 
     @keyframes setupFade {
       from { opacity: 0; }
@@ -803,24 +877,29 @@
     }
 
     @keyframes setupLift {
-      from { opacity: 0; transform: translateY(10px) scale(0.985); }
+      from { opacity: 0; transform: translateY(12px) scale(0.992); filter: blur(6px); }
       to { opacity: 1; transform: translateY(0) scale(1); }
     }
 
     @keyframes overlaySweep {
-      0%, 100% { transform: translateX(-28%); opacity: 0.32; }
-      50% { transform: translateX(18%); opacity: 0.58; }
+      0%, 100% { transform: translateX(-3%) scale(1.02); opacity: 0.62; }
+      50% { transform: translateX(3%) scale(1.07); opacity: 0.86; }
     }
 
     @keyframes setupScan {
-      0%, 32% { transform: translateX(-100%); opacity: 0; }
-      42%, 58% { opacity: 1; }
-      72%, 100% { transform: translateX(100%); opacity: 0; }
+      0%, 24% { transform: translateX(-18%); opacity: 0.18; }
+      48%, 62% { opacity: 0.5; }
+      100% { transform: translateX(18%); opacity: 0.2; }
+    }
+
+    @keyframes setupPetalGlow {
+      0%, 100% { opacity: 0.54; transform: translateX(-50%) scale(0.98); }
+      50% { opacity: 0.86; transform: translateX(-50%) scale(1.06); }
     }
 
     @keyframes setupPulse {
-      0%, 100% { box-shadow: 0 0 0 rgba(232, 175, 52, 0); }
-      50% { box-shadow: 0 0 24px rgba(232, 175, 52, 0.16); }
+      0%, 100% { text-shadow: 0 0 0 rgba(232, 175, 52, 0); }
+      50% { text-shadow: 0 0 24px rgba(232, 175, 52, 0.38); }
     }
 
     @keyframes appSettle {
@@ -839,8 +918,16 @@
     }
 
     @keyframes lotusPulse {
-      0%, 100% { box-shadow: 0 0 14px var(--color-ambient), inset 0 0 14px color-mix(in srgb, var(--color-primary) 12%, transparent); }
-      50% { box-shadow: 0 0 34px var(--color-ambient), inset 0 0 24px color-mix(in srgb, var(--color-primary-2) 18%, transparent); }
+      0%, 100% {
+        filter:
+          drop-shadow(0 0 8px color-mix(in srgb, var(--color-primary) 42%, transparent))
+          drop-shadow(0 0 18px color-mix(in srgb, var(--color-primary-2) 22%, transparent));
+      }
+      50% {
+        filter:
+          drop-shadow(0 0 14px color-mix(in srgb, var(--color-primary) 62%, transparent))
+          drop-shadow(0 0 30px color-mix(in srgb, var(--color-primary-2) 34%, transparent));
+      }
     }
 
     .resource-warning {
@@ -1313,6 +1400,25 @@
 
     @media (max-width: 760px) {
       .plugin-grid { grid-template-columns: 1fr; }
+      .setup-panel { padding: 22px; }
+      .setup-card {
+        min-height: auto;
+        align-content: start;
+        padding-top: 58px;
+      }
+      .setup-top {
+        grid-template-columns: 1fr;
+        align-items: start;
+      }
+      .setup-title {
+        font-size: clamp(42px, 17vw, 72px);
+      }
+      .setup-summary {
+        margin-top: 12px;
+      }
+      .setup-run {
+        justify-self: start;
+      }
       .setup-steps { grid-template-columns: 1fr; }
       .setup-wizard-grid { grid-template-columns: 1fr; }
     }
@@ -2056,7 +2162,32 @@
 
   <div class="app">
     <header class="header">
-      <div class="logo"><span class="brand-mark" aria-hidden="true"></span><span>Locus</span></div>
+      <div class="logo">
+        <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+          <defs>
+            <radialGradient id="lotusCoreGlow" cx="50%" cy="68%" r="50%">
+              <stop offset="0" stop-color="#fff7b8" stop-opacity="0.72"/>
+              <stop offset="0.55" stop-color="#f0abfc" stop-opacity="0.22"/>
+              <stop offset="1" stop-color="#c084fc" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <ellipse cx="32" cy="38" rx="21" ry="19" fill="url(#lotusCoreGlow)"/>
+          <g>
+            <ellipse class="petal petal-low" cx="20" cy="39" rx="7.3" ry="16.8" transform="rotate(-58 20 39)"/>
+            <ellipse class="petal petal-low" cx="44" cy="39" rx="7.3" ry="16.8" transform="rotate(58 44 39)"/>
+            <ellipse class="petal petal-side" cx="24.7" cy="31.6" rx="7.8" ry="18.7" transform="rotate(-32 24.7 31.6)"/>
+            <ellipse class="petal petal-side" cx="39.3" cy="31.6" rx="7.8" ry="18.7" transform="rotate(32 39.3 31.6)"/>
+            <ellipse class="petal petal-mid" cx="32" cy="26.4" rx="8.2" ry="20.2"/>
+            <ellipse class="petal petal-center" cx="27.7" cy="40.6" rx="7.6" ry="14.8" transform="rotate(-18 27.7 40.6)"/>
+            <ellipse class="petal petal-center" cx="36.3" cy="40.6" rx="7.6" ry="14.8" transform="rotate(18 36.3 40.6)"/>
+            <ellipse class="petal petal-center" cx="32" cy="42.8" rx="7.1" ry="13.1"/>
+          </g>
+          <circle class="lotus-core" cx="32" cy="42.5" r="4.8"/>
+          <path class="lotus-stem" d="M32 47.2 C32.6 50.2 32.2 53.2 31.1 56.2"/>
+          <path class="lotus-water" d="M13.5 52.4 C20.8 48.8 27.7 48.7 32 51.2 C36.3 48.7 43.2 48.8 50.5 52.4"/>
+        </svg>
+        <span>Locus</span>
+      </div>
       <div class="header-actions">
         <span id="modelPolicy" class="policy-pill">Local models off</span>
         <div class="status-wrap">

@@ -1,5 +1,10 @@
 ## CHANGES.md
 
+### Lotus logo and setup overlay polish
+- Replaced the dashboard's rounded-square badge with a transparent layered lotus logo.
+- Added `assets/icons/locus-logo.svg` as the standalone Locus logo source.
+- Reworked first-time setup styling so it floats as a glowy system overlay instead of a modal app window.
+
 ### Cross-platform app icon assets
 - Replaced the initial target-style icon with a lotus-flower mark built from layered petal shapes.
 - Added a custom 2D Locus app icon source and generated exports for macOS and Windows.
