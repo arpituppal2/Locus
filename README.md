@@ -115,23 +115,26 @@ bootstrap automatically:
 - create `.venv`
 - install `requirements.txt`
 - install Playwright Chromium
-- recommend the right local models for the machine without downloading them
-- leave Ollama and model file downloads optional until local model mode is enabled
+- recommend the right local models for the machine
+- show the recommended model bundle, disk-space estimate, and free-space check
+- ask before downloading model files, then pull every recommended Ollama model automatically
 - start the dashboard
 
 When the dashboard opens for the first time, it runs the remaining setup as a
 system-style setup wizard and streams each step: folder creation, plugin
-registry checks, hardware model recommendation, optional model assets, workspace
+registry checks, hardware model recommendation, permissioned model assets, workspace
 indexing, safety limits, Full Disk Access status, and Accessibility status for
 global shortcuts. The frontend, setup, plugins, uploads, browser control, and
-history work before Ollama or any model file exists. Downloading models pulls
-model files only; Locus still does not run inference until local model mode is
-explicitly enabled.
+history work before Ollama or any model file exists. Downloading models requires
+approval in the setup overlay; Locus shows the total download size, safety
+margin, available disk space, and exact model list first. Downloading models
+pulls model files only; Locus still does not run inference until local model
+mode is explicitly enabled.
 
 Automatic Python setup uses Homebrew on macOS and `winget` on Windows. Automatic
-Ollama setup is off by default. If enabled later, it uses
-`brew install --cask ollama` on macOS and `winget install Ollama.Ollama` on
-Windows. To explicitly keep a test run model-asset free:
+Ollama setup is off until the user approves model downloads. After approval, it
+uses `brew install --cask ollama` on macOS and `winget install Ollama.Ollama` on
+Windows when Ollama is missing. To explicitly keep a test run model-asset free:
 
 ```bash
 LOCAL_COMPUTER_AUTO_INSTALL_MODELS=0 LOCAL_COMPUTER_AUTO_INSTALL_OLLAMA=0 ./run.sh
@@ -139,6 +142,20 @@ LOCAL_COMPUTER_AUTO_INSTALL_MODELS=0 LOCAL_COMPUTER_AUTO_INSTALL_OLLAMA=0 ./run.
 
 ```powershell
 $env:LOCAL_COMPUTER_AUTO_INSTALL_MODELS="0"; $env:LOCAL_COMPUTER_AUTO_INSTALL_OLLAMA="0"; .\run.ps1
+```
+
+To review the space estimate from a terminal without downloading anything:
+
+```bash
+python scripts/setup_manager.py --model-download-plan
+```
+
+To approve downloads from a terminal, then let setup pull the recommended
+models:
+
+```bash
+python scripts/setup_manager.py --approve-model-downloads
+python scripts/setup_manager.py --app-setup
 ```
 
 On macOS, `install_dock_app.sh` builds `~/Applications/Locus.app` as a menu-bar
@@ -229,9 +246,11 @@ python scripts/generate_app_icons.py
 ## Model Routing
 
 Run `python scripts/model_selector.py` to recommend models for the current OS,
-CPU, GPU, VRAM, and RAM. The selector itself prints download commands only; the
-first-run setup wizard can use that recommendation to pull the model files
-automatically.
+CPU, GPU, VRAM, and RAM. The selector itself prints download commands only. The
+first-run setup wizard turns that recommendation into a permissioned download
+plan with total size, missing model size, safety margin, and free disk space.
+After approval, setup pulls every recommended model automatically through
+Ollama.
 
 The selector is conservative on Apple Silicon unified memory and slightly more
 reserved on Windows so the OS, browser automation, and app plugins keep room to
@@ -395,9 +414,12 @@ mode.
 ### Pull the local models
 
 ```bash
-python scripts/model_selector.py
-# Then pull only the models printed in the download plan.
-# Nothing is downloaded unless you run ollama pull or pass --pull.
+python scripts/setup_manager.py --model-download-plan
+# Review the exact model list, total GB, safety margin, and free disk space.
+
+python scripts/setup_manager.py --approve-model-downloads
+python scripts/setup_manager.py --app-setup
+# Setup installs/starts Ollama if enabled and pulls every recommended model.
 ```
 
 ---

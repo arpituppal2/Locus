@@ -195,10 +195,15 @@ def main() -> None:
         status = setup_status()
         steps = {step["id"]: step for step in status["steps"]}
         _assert(steps["model_downloads"]["required"] is False, "model downloads must not block frontend readiness")
-        _assert(steps["model_downloads"]["state"] == "done", "disabled model downloads should be ready, not warning")
+        _assert(steps["model_downloads"]["state"] in {"warning", "done"}, "model downloads should ask permission without blocking frontend readiness")
+        plan = status.get("model_download_plan", {})
+        _assert(plan.get("model_count", 0) >= 1, "model download plan missing recommended models")
+        _assert(plan.get("total_size_gb", 0) > 0, "model download plan missing space estimate")
+        _assert("free_disk_gb" in plan, "model download plan missing free disk estimate")
         _assert(steps["ollama"]["required"] is False, "Ollama must be optional while models are disabled")
         wizard_text = json.dumps(status.get("wizard", {}))
         _assert("works before Ollama" in wizard_text, "setup wizard must explain model-free frontend readiness")
+        _assert("space estimate" in wizard_text or "disk-space estimate" in wizard_text, "setup wizard must explain permissioned model download estimates")
         _assert(os.environ.get("LOCAL_COMPUTER_AUTO_INSTALL_MODELS") == "0", "acceptance must keep automatic model downloads disabled")
 
     def browser() -> None:

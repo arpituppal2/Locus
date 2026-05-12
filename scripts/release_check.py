@@ -96,6 +96,8 @@ def _check_assets() -> None:
     _assert("Learn Step-by-Step" in text, "dashboard is missing the Learn Step-by-Step control")
     _assert("Compute Usage" in text, "dashboard is missing compute usage settings")
     _assert("Model files are optional" in text, "dashboard must state that model assets are optional")
+    _assert("Approve Model Downloads" in text, "dashboard must expose permissioned model downloads")
+    _assert("Locus asks permission before pulling" in text, "dashboard must explain model download permission")
     _assert("work without downloaded models" in text, "dashboard must expose model-free frontend readiness")
 
 
@@ -121,7 +123,14 @@ def _check_plugins_and_safety() -> None:
     for required in ["os", "python", "deps", "chromium", "plugins", "models", "safety"]:
         _assert(required in steps, f"setup status missing step: {required}")
     _assert(steps.get("model_downloads", {}).get("required") is False, "model assets must not block model-free frontend readiness")
-    _assert(steps.get("model_downloads", {}).get("state") == "done", "disabled model downloads should be treated as ready for frontend use")
+    _assert(
+        steps.get("model_downloads", {}).get("state") in {"warning", "done"},
+        "setup must show permissioned model downloads without blocking frontend use",
+    )
+    download_plan = status.get("model_download_plan", {})
+    _assert(download_plan.get("model_count", 0) >= 1, "setup must expose the recommended model download plan")
+    _assert(download_plan.get("total_size_gb", 0) > 0, "model download plan must include a total space estimate")
+    _assert("free_disk_gb" in download_plan, "model download plan must include local free disk estimate")
     _assert(steps.get("ollama", {}).get("required") is False, "Ollama must not be required for the frontend")
     _assert(os.getenv("LOCAL_COMPUTER_AUTO_INSTALL_MODELS") == "0", "release gate must keep automatic model downloads disabled")
 

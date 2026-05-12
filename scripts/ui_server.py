@@ -31,6 +31,8 @@ from scripts.run_history import list_runs, list_tool_events, store_run, store_to
 from scripts.runtime_policy import INTELLIGENCE_LEVELS, local_models_allowed, runtime_summary, update_runtime
 from scripts.setup_manager import (
     accessibility_status,
+    approve_model_downloads,
+    decline_model_downloads,
     full_disk_access_status,
     open_accessibility_settings,
     open_full_disk_access_settings,
@@ -770,6 +772,27 @@ async def _handle_ws(ws: WebSocketServerProtocol, path: str) -> None:
                     await ws.send(json.dumps({"type": "autonomy_mode", "data": {"mode": mode, "error": str(exc)}}))
             elif msg_type == "setup":
                 asyncio.create_task(_run_setup_flow())
+            elif msg_type == "model_downloads":
+                payload = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+                action = str(payload.get("action") or "plan").strip().lower()
+                try:
+                    if action in {"approve", "download", "start"}:
+                        result = await asyncio.to_thread(approve_model_downloads)
+                        await ws.send(
+                            json.dumps({"type": "model_downloads", "data": {**result, "action": "approve"}}, ensure_ascii=False)
+                        )
+                        asyncio.create_task(_run_setup_flow())
+                    elif action in {"skip", "decline"}:
+                        result = await asyncio.to_thread(decline_model_downloads)
+                        await ws.send(json.dumps({"type": "model_downloads", "data": {**result, "action": "skip"}}, ensure_ascii=False))
+                        await ws.send(json.dumps({"type": "setup_status", "data": await _setup_status()}, ensure_ascii=False))
+                    else:
+                        await ws.send(json.dumps({"type": "setup_status", "data": await _setup_status()}, ensure_ascii=False))
+                except Exception as exc:
+                    await ws.send(
+                        json.dumps({"type": "model_downloads", "data": {"ok": False, "action": action, "error": str(exc)}}, ensure_ascii=False)
+                    )
+                    await ws.send(json.dumps({"type": "setup_status", "data": await _setup_status()}, ensure_ascii=False))
             elif msg_type == "permission":
                 payload = msg.get("data") if isinstance(msg.get("data"), dict) else {}
                 action = str(payload.get("action") or "check")
@@ -988,6 +1011,17 @@ async def _process_request(path: str, request_headers):
 
     if request_path == "/api/models/recommendation":
         payload = json.dumps(recommend_models()).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
+
+    if request_path == "/api/models/download-plan":
+        payload = json.dumps((await _setup_status()).get("model_download_plan", {})).encode("utf-8")
         return (
             HTTPStatus.OK,
             [

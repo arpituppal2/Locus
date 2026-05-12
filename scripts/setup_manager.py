@@ -23,6 +23,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(ROOT))
 
 from scripts.os_profile import detect_os
+from scripts.runtime_policy import FALSY
 
 VENV = ROOT / ".venv"
 REQUIREMENTS = ROOT / "requirements.txt"
@@ -277,7 +278,8 @@ def _setup_wizard(
             [
                 f"Local app state: {STATE_DIR}",
                 "Setup installs app dependencies and Playwright Chromium first.",
-                "Model files are optional; the full frontend works before Ollama or any model download.",
+                "Model files download only after you approve the space estimate.",
+                "The full frontend works before Ollama or any model download.",
                 "Downloaded model files are never run until local model mode is explicitly enabled.",
             ],
             "none" if os_profile.supported else "Use macOS or Windows",
@@ -330,10 +332,10 @@ def _setup_wizard(
             "models",
             "Model Choice",
             _worst_state([_step_state(steps, "models"), _step_state(steps, "model_downloads")]),
-            "Locus recommends models from OS, RAM, current memory pressure, and GPU/VRAM. Downloading model files is optional.",
+            "Locus recommends models from OS, RAM, current memory pressure, and GPU/VRAM, then asks before downloading them.",
             [
                 "The frontend, setup, plugins, uploads, browser control, and history work before model files exist.",
-                "Automatic model downloads are off by default.",
+                "Setup shows a disk-space estimate before any Ollama pull runs.",
                 "NVIDIA Windows machines use VRAM-aware recommendations.",
             ],
             "Enable model downloads"
@@ -629,17 +631,100 @@ def _recommended_models_from(recommendation: dict[str, Any] | None) -> list[str]
     return [str(model) for model in recommendation.get("recommended_models", []) if model]
 
 
+def _format_gb(value: float | int | None) -> str:
+    if value is None:
+        return "unknown"
+    return f"{float(value):.1f} GB"
+
+
+def model_download_plan(recommendation: dict[str, Any] | None) -> dict[str, Any]:
+    """Return a permission-safe model download plan without pulling anything."""
+    from scripts.runtime_policy import auto_install_models, skip_model_validation
+
+    pull_plan = list((recommendation or {}).get("pull_plan") or [])
+    installed: set[str] = set()
+    installed_check_skipped = skip_model_validation() and not auto_install_models()
+    if not installed_check_skipped:
+        installed = _installed_ollama_models()
+
+    models: list[dict[str, Any]] = []
+    total_size_gb = 0.0
+    missing_size_gb = 0.0
+    missing_models: list[str] = []
+    for item in pull_plan:
+        model = str(item.get("model") or "").strip()
+        if not model:
+            continue
+        approx_size = float(item.get("approx_size_gb") or 0.0)
+        total_size_gb += approx_size
+        is_installed = (model in installed) if not installed_check_skipped else False
+        is_missing = not is_installed
+        if is_missing:
+            missing_models.append(model)
+            missing_size_gb += approx_size
+        models.append(
+            {
+                "model": model,
+                "approx_size_gb": round(approx_size, 2),
+                "estimated_runtime_ram_gb": item.get("estimated_runtime_ram_gb"),
+                "estimated_runtime_vram_gb": item.get("estimated_runtime_vram_gb"),
+                "roles": item.get("roles", []),
+                "command": item.get("command") or f"ollama pull {model}",
+                "installed": is_installed,
+                "missing": is_missing,
+            }
+        )
+
+    try:
+        disk = shutil.disk_usage(Path.home())
+        free_disk_gb = round(disk.free / (1024**3), 2)
+    except Exception:
+        free_disk_gb = None
+    safety_margin_gb = round(max(2.0, missing_size_gb * 0.15), 2) if missing_size_gb else 0.0
+    required_disk_gb = round(missing_size_gb + safety_margin_gb, 2)
+    enough_disk = True if free_disk_gb is None else free_disk_gb >= required_disk_gb
+
+    return {
+        "models": models,
+        "model_count": len(models),
+        "missing_models": missing_models,
+        "missing_model_count": len(missing_models),
+        "total_size_gb": round(total_size_gb, 2),
+        "missing_size_gb": round(missing_size_gb, 2),
+        "safety_margin_gb": safety_margin_gb,
+        "required_disk_gb": required_disk_gb,
+        "free_disk_gb": free_disk_gb,
+        "enough_disk": enough_disk,
+        "install_location_hint": str(Path.home() / ".ollama" / "models"),
+        "permission_required": bool(missing_models) and not auto_install_models(),
+        "auto_install_enabled": auto_install_models(),
+        "installed_check_skipped": installed_check_skipped,
+    }
+
+
 def _model_download_status(recommendation: dict[str, Any] | None) -> dict[str, Any]:
     from scripts.runtime_policy import auto_install_models
 
     models = _recommended_models_from(recommendation)
+    plan = model_download_plan(recommendation)
+    missing_count = int(plan.get("missing_model_count") or len(models))
+    missing_size = float(plan.get("missing_size_gb") or 0.0)
+    required_disk = float(plan.get("required_disk_gb") or missing_size)
+    free_disk = plan.get("free_disk_gb")
+    free_text = f"; {_format_gb(free_disk)} free" if free_disk is not None else ""
     if not auto_install_models():
         return {
-            "state": "done",
-            "detail": "optional; frontend ready without model files",
+            "state": "warning" if missing_count else "done",
+            "detail": (
+                f"permission needed before download: {missing_count} model(s), "
+                f"~{_format_gb(missing_size)} download, {_format_gb(required_disk)} with margin{free_text}"
+            )
+            if missing_count
+            else "recommended model files already installed",
             "required": False,
-            "missing": models,
-            "action": "none",
+            "missing": plan.get("missing_models", models),
+            "action": f"Approve model downloads ({_format_gb(missing_size)})" if missing_count else "none",
+            "plan": plan,
         }
     if not models:
         return {
@@ -648,17 +733,30 @@ def _model_download_status(recommendation: dict[str, Any] | None) -> dict[str, A
             "required": True,
             "missing": [],
             "action": "Generate recommendation",
+            "plan": plan,
+        }
+    if not plan.get("enough_disk", True):
+        return {
+            "state": "error",
+            "detail": (
+                f"not enough disk space for {_format_gb(missing_size)} of models "
+                f"({_format_gb(required_disk)} needed with margin{free_text})"
+            ),
+            "required": True,
+            "missing": plan.get("missing_models", models),
+            "action": "Free disk space or skip model downloads",
+            "plan": plan,
         }
     if not shutil.which("ollama"):
         return {
             "state": "pending",
-            "detail": f"Ollama will be installed, then {len(models)} model(s) will download",
+            "detail": f"Ollama will be installed, then {missing_count} model(s) will download (~{_format_gb(missing_size)})",
             "required": True,
             "missing": models,
             "action": "Install Ollama and models",
+            "plan": plan,
         }
-    installed = _installed_ollama_models()
-    missing = [model for model in models if model not in installed]
+    missing = list(plan.get("missing_models") or [])
     if not missing:
         return {
             "state": "done",
@@ -666,26 +764,41 @@ def _model_download_status(recommendation: dict[str, Any] | None) -> dict[str, A
             "required": True,
             "missing": [],
             "action": "none",
+            "plan": plan,
         }
     return {
         "state": "pending",
-        "detail": f"{len(missing)}/{len(models)} recommended model(s) need download",
+        "detail": f"{len(missing)}/{len(models)} recommended model(s) need download (~{_format_gb(missing_size)})",
         "required": True,
         "missing": missing,
         "action": "Download recommended models",
+        "plan": plan,
     }
 
 
 def _install_recommended_models(emit: EventHandler | None, recommendation: dict[str, Any] | None) -> None:
     from scripts.runtime_policy import auto_install_models
 
+    plan = model_download_plan(recommendation)
     if not auto_install_models():
-        _emit(emit, "model_downloads", "Model Assets", "done", "skipped; frontend is ready without model files")
+        _emit(
+            emit,
+            "model_downloads",
+            "Model Assets",
+            "warning",
+            f"waiting for permission before downloading ~{_format_gb(float(plan.get('missing_size_gb') or 0.0))}",
+        )
         return
 
     models = _recommended_models_from(recommendation)
     if not models:
         raise RuntimeError("No recommended models were available to download.")
+    if not plan.get("enough_disk", True):
+        raise RuntimeError(
+            "Not enough disk space for recommended model downloads: "
+            f"{_format_gb(float(plan.get('required_disk_gb') or 0.0))} needed with margin, "
+            f"{_format_gb(plan.get('free_disk_gb'))} free."
+        )
     _install_ollama(emit)
     _ensure_ollama_server(emit)
     installed = _installed_ollama_models()
@@ -694,10 +807,54 @@ def _install_recommended_models(emit: EventHandler | None, recommendation: dict[
         _emit(emit, "model_downloads", "Model Downloads", "done", f"{len(models)} recommended model(s) already installed")
         return
 
+    size_by_model = {item.get("model"): item.get("approx_size_gb") for item in plan.get("models", [])}
     for index, model in enumerate(missing, start=1):
-        _emit(emit, "model_downloads", "Model Downloads", "running", f"downloading {model} ({index}/{len(missing)})")
+        size = _format_gb(size_by_model.get(model))
+        _emit(emit, "model_downloads", "Model Downloads", "running", f"downloading {model} ({index}/{len(missing)}, ~{size})")
         _run_stream(["ollama", "pull", model], emit, "model_downloads", "Model Downloads")
     _emit(emit, "model_downloads", "Model Downloads", "done", f"installed {len(models)} recommended model(s)")
+
+
+def approve_model_downloads() -> dict[str, Any]:
+    """Persist explicit consent to download the recommended model bundle."""
+    from scripts.model_selector import recommend_models
+    from scripts.runtime_policy import update_runtime
+
+    recommendation = recommend_models()
+    plan = model_download_plan(recommendation)
+    if os.getenv("LOCAL_COMPUTER_AUTO_INSTALL_MODELS", "").strip().lower() in FALSY:
+        raise RuntimeError("Model downloads are disabled by LOCAL_COMPUTER_AUTO_INSTALL_MODELS=0.")
+    if os.getenv("LOCAL_COMPUTER_AUTO_INSTALL_OLLAMA", "").strip().lower() in FALSY and not shutil.which("ollama"):
+        raise RuntimeError("Ollama installation is disabled by LOCAL_COMPUTER_AUTO_INSTALL_OLLAMA=0.")
+    if not plan.get("enough_disk", True):
+        raise RuntimeError(
+            "Not enough disk space for recommended model downloads: "
+            f"{_format_gb(float(plan.get('required_disk_gb') or 0.0))} needed with margin, "
+            f"{_format_gb(plan.get('free_disk_gb'))} free."
+        )
+    runtime = update_runtime({"auto_install_models": True, "auto_install_ollama": True})
+    _write_state(
+        {
+            "model_download_permission": "approved",
+            "model_download_plan": plan,
+            "model_download_approved_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        }
+    )
+    return {"ok": True, "runtime": runtime, "plan": plan}
+
+
+def decline_model_downloads() -> dict[str, Any]:
+    """Persist an explicit skip so setup remains clear but model-free."""
+    from scripts.runtime_policy import update_runtime
+
+    runtime = update_runtime({"auto_install_models": False})
+    _write_state(
+        {
+            "model_download_permission": "skipped",
+            "model_download_skipped_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        }
+    )
+    return {"ok": True, "runtime": runtime}
 
 
 def setup_status(lightweight: bool = False) -> dict[str, Any]:
@@ -909,6 +1066,7 @@ def setup_status(lightweight: bool = False) -> dict[str, Any]:
         "os": os_profile.to_dict(),
         "wizard": _setup_wizard(os_profile, budget, steps, recommendation, complete),
         "checklist": checklist,
+        "model_download_plan": model_downloads.get("plan", {}),
         "state": state,
         "steps": steps,
         "state_dir": str(STATE_DIR),
@@ -1035,6 +1193,9 @@ def _print_event(event: dict[str, Any]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Locus setup manager")
     parser.add_argument("--status", action="store_true", help="Print setup status as JSON")
+    parser.add_argument("--model-download-plan", action="store_true", help="Print recommended model download plan as JSON")
+    parser.add_argument("--approve-model-downloads", action="store_true", help="Approve automatic recommended model downloads on next setup run")
+    parser.add_argument("--skip-model-downloads", action="store_true", help="Keep recommended model downloads disabled")
     parser.add_argument("--bootstrap", action="store_true", help="Create/repair venv, dependencies, and Playwright")
     parser.add_argument("--app-setup", action="store_true", help="Run app-level setup")
     parser.add_argument("--open-full-disk-access", action="store_true", help="Open macOS Full Disk Access settings")
@@ -1043,6 +1204,17 @@ def main() -> None:
 
     if args.status:
         print(json.dumps(setup_status(), indent=2))
+        return
+    if args.model_download_plan:
+        from scripts.model_selector import recommend_models
+
+        print(json.dumps(model_download_plan(recommend_models()), indent=2))
+        return
+    if args.approve_model_downloads:
+        print(json.dumps(approve_model_downloads(), indent=2))
+        return
+    if args.skip_model_downloads:
+        print(json.dumps(decline_model_downloads(), indent=2))
         return
     if args.bootstrap:
         run_bootstrap(_print_event)

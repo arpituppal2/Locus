@@ -983,6 +983,15 @@
 
     .setup-actions.show { display: flex; }
 
+    #modelDownloadActions {
+      align-items: center;
+    }
+
+    #modelDownloadEstimate {
+      flex: 1 1 280px;
+      min-width: 240px;
+    }
+
     .setup-secondary {
       border: 1px solid color-mix(in srgb, var(--color-primary) 34%, transparent);
       background:
@@ -4578,6 +4587,12 @@
       display: flex;
     }
 
+    body.surface-setup #modelDownloadActions.show {
+      top: 82px;
+      border-radius: 24px;
+      max-width: min(620px, calc(100vw - 40px));
+    }
+
     body.surface-setup .setup-log.show {
       display: block;
       max-height: 74px;
@@ -5079,7 +5094,7 @@
             <div class="setup-top">
               <div>
                 <div class="setup-title">Set up Locus</div>
-                <div id="setupSummary" class="setup-summary">Locus installs the app first. Model files are optional.</div>
+                <div id="setupSummary" class="setup-summary">Model files are optional; downloads ask permission and show space first.</div>
               </div>
               <button id="setupRunBtn" class="setup-run" type="button">Start Setup</button>
             </div>
@@ -5105,6 +5120,11 @@
               <button id="openFullDiskBtn" class="setup-secondary" type="button">Open Full Disk Access</button>
               <button id="openAccessibilityBtn" class="setup-secondary" type="button">Open Accessibility</button>
               <button id="checkFullDiskBtn" class="setup-secondary" type="button">Check Again</button>
+            </div>
+            <div id="modelDownloadActions" class="setup-actions">
+              <div id="modelDownloadEstimate" class="setup-step-help">Recommended models will download only after approval.</div>
+              <button id="approveModelDownloadsBtn" class="setup-secondary" type="button">Approve Model Downloads</button>
+              <button id="skipModelDownloadsBtn" class="setup-secondary" type="button">Skip Models for Now</button>
             </div>
             <div id="setupLog" class="setup-log"></div>
           </div>
@@ -5450,6 +5470,10 @@
     const setupLog = document.getElementById('setupLog');
     const setupRunBtn = document.getElementById('setupRunBtn');
     const permissionActions = document.getElementById('permissionActions');
+    const modelDownloadActions = document.getElementById('modelDownloadActions');
+    const modelDownloadEstimate = document.getElementById('modelDownloadEstimate');
+    const approveModelDownloadsBtn = document.getElementById('approveModelDownloadsBtn');
+    const skipModelDownloadsBtn = document.getElementById('skipModelDownloadsBtn');
     const openFullDiskBtn = document.getElementById('openFullDiskBtn');
     const openAccessibilityBtn = document.getElementById('openAccessibilityBtn');
     const checkFullDiskBtn = document.getElementById('checkFullDiskBtn');
@@ -7009,6 +7033,37 @@
       });
     }
 
+    function formatModelGb(value) {
+      if (typeof value !== 'number' || Number.isNaN(value)) return 'unknown';
+      return `${value.toFixed(1)} GB`;
+    }
+
+    function renderModelDownloadActions(status) {
+      const steps = (status && status.steps) || [];
+      const modelStep = steps.find(item => item.id === 'model_downloads') || {};
+      const plan = (status && status.model_download_plan) || modelStep.plan || {};
+      const missingCount = Number(plan.missing_model_count || 0);
+      const missingSize = Number(plan.missing_size_gb || 0);
+      const requiredDisk = Number(plan.required_disk_gb || missingSize || 0);
+      const freeDisk = typeof plan.free_disk_gb === 'number' ? formatModelGb(plan.free_disk_gb) : 'unknown free space';
+      const needsApproval = Boolean(modelStep.action && modelStep.action !== 'none' && modelStep.state !== 'done');
+      const showActions = needsApproval || Boolean(plan.permission_required);
+      modelDownloadActions.classList.toggle('show', showActions);
+      if (!showActions) return;
+      const modelList = Array.isArray(plan.missing_models) && plan.missing_models.length
+        ? plan.missing_models.join(', ')
+        : 'recommended model files';
+      modelDownloadEstimate.textContent =
+        `${missingCount || 'Recommended'} model(s): ${modelList}. ` +
+        `Estimated download ${formatModelGb(missingSize)}, ${formatModelGb(requiredDisk)} with margin, ${freeDisk}.`;
+      const enoughDisk = plan.enough_disk !== false;
+      approveModelDownloadsBtn.disabled = !enoughDisk || Boolean(status && status.running);
+      approveModelDownloadsBtn.textContent = enoughDisk
+        ? `Approve & Download (${formatModelGb(missingSize)})`
+        : 'Not Enough Disk Space';
+      skipModelDownloadsBtn.disabled = Boolean(status && status.running);
+    }
+
     function renderSetupStatus(status) {
       setupLastStatus = status || null;
       const complete = Boolean(status && status.complete);
@@ -7031,6 +7086,7 @@
             : `Locus is ready on ${osName}. ${requiredText}.`
           : `${requiredText}. Setup will install and create what Locus needs.`;
       renderSetupWizard(status || {});
+      renderModelDownloadActions(status || {});
       setupStepMap = new Map();
       ((status && status.steps) || []).forEach(renderSetupStep);
       if (!complete && !runningSetup && ws && ws.readyState === WebSocket.OPEN && !setupAutoStarted) {
@@ -7064,6 +7120,23 @@
       setupRunBtn.disabled = true;
       setupRunBtn.textContent = 'Working';
       ws.send(JSON.stringify({ type: 'setup', data: { manual: true } }));
+    }
+
+    function approveModelDownloads() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      playLocusTone('soft');
+      setupPanel.classList.add('show');
+      setupSummary.textContent = 'Approving model downloads and checking disk space';
+      approveModelDownloadsBtn.disabled = true;
+      skipModelDownloadsBtn.disabled = true;
+      ws.send(JSON.stringify({ type: 'model_downloads', data: { action: 'approve' } }));
+    }
+
+    function skipModelDownloads() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      playLocusTone('soft');
+      setupSummary.textContent = 'Model downloads skipped. You can approve them later from setup.';
+      ws.send(JSON.stringify({ type: 'model_downloads', data: { action: 'skip' } }));
     }
 
     function requestFullDiskAccess() {
@@ -7609,6 +7682,18 @@
       `;
       modelList.appendChild(assetRow);
 
+      const pullPlan = Array.isArray(rec.pull_plan) ? rec.pull_plan : [];
+      if (pullPlan.length) {
+        const totalSize = pullPlan.reduce((sum, item) => sum + Number(item.approx_size_gb || 0), 0);
+        const downloadRow = document.createElement('div');
+        downloadRow.className = 'model-row';
+        downloadRow.innerHTML = `
+          <div class="row-title">Download plan</div>
+          <div class="row-meta">${pullPlan.length} model file(s) · ~${totalSize.toFixed(1)} GB · Locus asks permission before pulling.</div>
+        `;
+        modelList.appendChild(downloadRow);
+      }
+
       Object.entries(rec.roles).slice(0, 5).forEach(([role, model]) => {
         const row = document.createElement('div');
         row.className = 'model-row';
@@ -8019,6 +8104,18 @@
           setupRunBtn.textContent = 'Try Again';
           setupSummary.textContent = msg.data && msg.data.error ? msg.data.error : 'Setup failed';
         }
+        if (msg.type === 'model_downloads') {
+          const data = msg.data || {};
+          if (data.ok) {
+            setupSummary.textContent = data.action === 'skip'
+              ? 'Model downloads skipped. The app remains ready in model-free mode.'
+              : 'Model downloads approved. Locus is starting the local download setup.';
+          } else {
+            setupSummary.textContent = data.error || 'Model download approval failed';
+            approveModelDownloadsBtn.disabled = false;
+            skipModelDownloadsBtn.disabled = false;
+          }
+        }
         if (msg.type === 'permission') {
           const data = msg.data || {};
           if ((data.action === 'open_full_disk_access' || data.action === 'open_accessibility') && data.detail) {
@@ -8092,6 +8189,8 @@
     folderInput.addEventListener('change', () => uploadSelectedFiles(folderInput));
     saveRamBtn.addEventListener('click', saveRamBudget);
     setupRunBtn.addEventListener('click', runSetup);
+    approveModelDownloadsBtn.addEventListener('click', approveModelDownloads);
+    skipModelDownloadsBtn.addEventListener('click', skipModelDownloads);
     consoleSetupBtn.addEventListener('click', openSetupSurface);
     quickActionButtons.forEach(button => {
       button.addEventListener('click', () => runCommandById(button.dataset.command || ''));
