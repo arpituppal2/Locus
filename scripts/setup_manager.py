@@ -256,8 +256,9 @@ def _setup_wizard(
             os_intro,
             [
                 f"Local app state: {STATE_DIR}",
-                "Setup installs app dependencies, Playwright Chromium, Ollama, and recommended model files when enabled.",
-                "Downloaded model files are not run until local model mode is explicitly enabled.",
+                "Setup installs app dependencies and Playwright Chromium first.",
+                "Model files are optional; the full frontend works before Ollama or any model download.",
+                "Downloaded model files are never run until local model mode is explicitly enabled.",
             ],
             "none" if os_profile.supported else "Use macOS or Windows",
         ),
@@ -309,13 +310,13 @@ def _setup_wizard(
             "models",
             "Model Choice",
             _worst_state([_step_state(steps, "models"), _step_state(steps, "model_downloads")]),
-            "Locus recommends models from OS, RAM, current memory pressure, and GPU/VRAM, then downloads the recommended files when automatic model setup is enabled.",
+            "Locus recommends models from OS, RAM, current memory pressure, and GPU/VRAM. Downloading model files is optional.",
             [
-                "Setup downloads the recommended Ollama models automatically when enabled.",
+                "The frontend, setup, plugins, uploads, browser control, and history work before model files exist.",
+                "Automatic model downloads are off by default.",
                 "NVIDIA Windows machines use VRAM-aware recommendations.",
-                "Apple Silicon uses unified-memory budgets.",
             ],
-            "Install recommended models"
+            "Enable model downloads"
             if _worst_state([_step_state(steps, "models"), _step_state(steps, "model_downloads")]) != "done"
             else "none",
         ),
@@ -600,11 +601,11 @@ def _model_download_status(recommendation: dict[str, Any] | None) -> dict[str, A
     models = _recommended_models_from(recommendation)
     if not auto_install_models():
         return {
-            "state": "warning",
-            "detail": "automatic model downloads disabled",
+            "state": "done",
+            "detail": "optional; frontend ready without model files",
             "required": False,
             "missing": models,
-            "action": "Enable automatic model downloads",
+            "action": "none",
         }
     if not models:
         return {
@@ -645,7 +646,7 @@ def _install_recommended_models(emit: EventHandler | None, recommendation: dict[
     from scripts.runtime_policy import auto_install_models
 
     if not auto_install_models():
-        _emit(emit, "model_downloads", "Model Downloads", "warning", "automatic model downloads disabled")
+        _emit(emit, "model_downloads", "Model Assets", "done", "skipped; frontend is ready without model files")
         return
 
     models = _recommended_models_from(recommendation)
@@ -725,9 +726,9 @@ def setup_status() -> dict[str, Any]:
         _step(
             "python",
             "Python runtime",
-            "done" if sys.version_info >= (3, 11) else "error",
+            "done" if sys.version_info >= (3, 12) else "error",
             f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-            action="none" if sys.version_info >= (3, 11) else "Install Python 3.11 or newer",
+            action="none" if sys.version_info >= (3, 12) else "Install Python 3.12 or newer",
             help_text="Locus uses Python for the local dashboard, plugins, setup, and browser automation.",
         ),
         _step(
@@ -780,12 +781,12 @@ def setup_status() -> dict[str, Any]:
         ),
         _step(
             "model_downloads",
-            "Model Downloads",
+            "Model Assets",
             str(model_downloads["state"]),
             str(model_downloads["detail"]),
             required=ollama_required,
             action=str(model_downloads.get("action") or "none"),
-            help_text="Setup pulls only the recommended Ollama model files. Pulling models does not run inference.",
+            help_text="Model files are optional. The frontend, plugins, setup, uploads, browser control, and history work before any download.",
             group="required" if ollama_required else "optional",
         ),
         _step(
@@ -829,8 +830,8 @@ def setup_status() -> dict[str, Any]:
         _step(
             "ollama",
             "Ollama",
-            "done" if ollama_available else "pending" if ollama_required else "warning",
-            "available" if ollama_available else "will be installed for model downloads" if ollama_required else "optional; install only for local model mode",
+            "done" if ollama_available or not ollama_required else "pending",
+            "available" if ollama_available else "will be installed for model downloads" if ollama_required else "not required until local model mode",
             required=ollama_required,
             action="none" if ollama_available else "Install Ollama automatically" if ollama_required else "Install Ollama only if you want local model mode",
             help_text="Model-free workspace mode, setup, plugins, uploads, and recommendations work without Ollama.",
@@ -891,7 +892,12 @@ def run_bootstrap(emit: EventHandler | None = None) -> None:
 
 
 def run_app_setup(emit: EventHandler | None = None) -> dict[str, Any]:
-    """Run dashboard-visible first-use setup. Does not download or run models."""
+    """Run dashboard-visible first-use setup.
+
+    Model files are optional and download only when automatic model setup is
+    explicitly enabled. Inference still stays off until local model mode is
+    explicitly enabled.
+    """
     _emit(emit, "setup", "Setup", "running", "preparing Locus")
     os_profile = detect_os()
     _emit(
