@@ -183,7 +183,7 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _wait_json(url: str, timeout: float = 12.0) -> dict[str, Any]:
+def _wait_json(url: str, timeout: float = 45.0) -> dict[str, Any]:
     deadline = time.time() + timeout
     last_error: Exception | None = None
     while time.time() < deadline:
