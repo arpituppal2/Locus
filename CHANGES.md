@@ -1,5 +1,12 @@
 ## CHANGES.md
 
+### Cross-platform app icon assets
+- Replaced the initial target-style icon with a lotus-flower mark built from layered petal shapes.
+- Added a custom 2D Locus app icon source and generated exports for macOS and Windows.
+- Wired `install_dock_app.sh` to install the committed macOS `.icns` asset instead of drawing a placeholder icon at install time.
+- Added `install_windows_shortcut.ps1` so Windows shortcuts use the committed `.ico` asset.
+- Shifted the dashboard visual language to lilac, violet, and lotus-glow surfaces.
+
 ### Locus repository rename
 - Renamed the Python project metadata to `locus`.
 - Updated setup documentation to use the `arpituppal2/Locus` repository name while keeping existing `LOCAL_COMPUTER_*` environment variables compatible.

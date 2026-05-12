@@ -19,3 +19,4 @@ browser_steps.json
 *.jpeg
 node_modules/
 lamt-brand-system/
+!assets/icons/**/*.png

@@ -7,11 +7,13 @@ import asyncio
 import json
 import logging
 import math
+import mimetypes
 import sys
 from dataclasses import asdict
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -38,6 +40,7 @@ from scripts.workspace_index import build_workspace_index, load_cached_index
 
 ROOT = Path(__file__).resolve().parent.parent
 DASHBOARD_HTML = ROOT / "dashboard" / "index.html"
+ASSETS_DIR = ROOT / "assets"
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
@@ -632,6 +635,31 @@ async def _process_request(path: str, request_headers):
                 body,
             )
         body = b"dashboard/index.html not found"
+        return (
+            HTTPStatus.NOT_FOUND,
+            [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))],
+            body,
+        )
+
+    if path.startswith("/assets/"):
+        target = (ROOT / unquote(path.lstrip("/"))).resolve()
+        try:
+            target.relative_to(ASSETS_DIR)
+        except ValueError:
+            target = ASSETS_DIR / "__missing__"
+        if target.is_file():
+            body = target.read_bytes()
+            content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+            return (
+                HTTPStatus.OK,
+                [
+                    ("Content-Type", content_type),
+                    ("Content-Length", str(len(body))),
+                    ("Cache-Control", "public, max-age=3600"),
+                ],
+                body,
+            )
+        body = b"asset not found"
         return (
             HTTPStatus.NOT_FOUND,
             [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))],

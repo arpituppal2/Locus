@@ -113,6 +113,23 @@ The Plugin Center shows every local plugin, connector readiness, declared tools,
 implemented tools, and risk labels. Plugin enable/disable state is persisted in
 `configs/plugins.json`.
 
+## App Icons
+
+The committed Locus icon set lives under `assets/icons/`. The source artwork is
+a lotus-flower mark made from layered petal shapes for a softer lilac system
+identity.
+
+- `assets/icons/locus-app-icon.svg` is the editable source artwork.
+- `assets/icons/locus-app-icon-1024.png` is the high-resolution preview/export.
+- `assets/icons/macos/Locus.icns` is used by `install_dock_app.sh`.
+- `assets/icons/windows/Locus.ico` is used by `install_windows_shortcut.ps1`.
+
+Regenerate the platform exports after changing the source art with:
+
+```bash
+python scripts/generate_app_icons.py
+```
+
 ---
 
 ## Runtime Modes
@@ -317,6 +334,7 @@ Locus/
 │   ├── plugins.json         ← plugin registry settings
 │   └── runtime.json         ← ports, timeouts, browser choice
 ├── plugins/                 ← plugin manifests and connector contracts
+├── assets/icons/            ← source, macOS .icns, and Windows .ico app icons
 ├── scripts/
 │   ├── hardware_profile.py     ← CPU/GPU/RAM detection
 │   ├── setup_manager.py        ← first-run setup checks and installers
