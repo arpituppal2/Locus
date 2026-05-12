@@ -80,14 +80,15 @@ $env:LOCAL_COMPUTER_AUTO_INSTALL_MODELS="0"; $env:LOCAL_COMPUTER_AUTO_INSTALL_OL
 ```
 
 On macOS, `install_dock_app.sh` builds `~/Applications/Locus.app` as a menu-bar
-accessory app, installs a login item, and opens Locus in a floating translucent
+accessory app and installs a login item. First run opens a full-screen
+translucent setup surface over the desktop, then reveals the floating command
 overlay instead of a browser tab. Option+Space summons the overlay; a quick
 double-Command press is also wired as a summon gesture when Accessibility/Input
 Monitoring permissions allow it.
 
 The app is written for non-technical users: setup starts automatically, shows
-plain-language progress, and avoids command-line-only instructions during normal
-use.
+plain-language progress, uses local Apple system fonts, and avoids
+command-line-only instructions during normal use.
 
 Resource warning: it is highly recommended not to use other apps while Locus is
 running. Local GPU usage is capped at 95% through the legacy

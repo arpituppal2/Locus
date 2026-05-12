@@ -41,20 +41,15 @@ class LocusAppDelegate(AppKit.NSObject):
     def applicationDidFinishLaunching_(self, _notification):
         self.panel = None
         self.webview = None
-        self.launch_window = None
+        self.setup_window = None
+        self.setup_webview = None
         self.last_command_down = 0.0
         self.status_item = None
         self._build_status_item()
         self._build_panel()
         self._install_shortcut_monitors()
-        self._show_launch_overlay()
-        AppKit.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            1.35,
-            self,
-            "showPanelFromTimer:",
-            None,
-            False,
-        )
+        self._show_setup_overlay()
+        self._schedule_setup_poll()
 
     def _icon_image(self, size: float = 18.0):
         image_path = ROOT / "assets" / "icons" / "locus-app-icon-64.png"
@@ -134,7 +129,7 @@ class LocusAppDelegate(AppKit.NSObject):
         self.panel = panel
         self.webview = webview
 
-    def _show_launch_overlay(self) -> None:
+    def _show_setup_overlay(self) -> None:
         screen = AppKit.NSScreen.mainScreen().frame()
         window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             screen,
@@ -144,7 +139,7 @@ class LocusAppDelegate(AppKit.NSObject):
         )
         window.setLevel_(AppKit.NSStatusWindowLevel)
         window.setOpaque_(False)
-        window.setIgnoresMouseEvents_(True)
+        window.setIgnoresMouseEvents_(False)
         window.setBackgroundColor_(AppKit.NSColor.clearColor())
         window.setCollectionBehavior_(
             AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
@@ -159,13 +154,16 @@ class LocusAppDelegate(AppKit.NSObject):
         except Exception:
             pass
         window.contentView().addSubview_(webview)
-        webview.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(f"{DASH_URL}/?surface=launch")))
+        webview.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(f"{DASH_URL}/?surface=setup")))
         window.orderFrontRegardless()
-        self.launch_window = window
+        self.setup_window = window
+        self.setup_webview = webview
+
+    def _schedule_setup_poll(self) -> None:
         AppKit.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            1.25,
+            0.85,
             self,
-            "hideLaunchOverlay:",
+            "pollSetupOverlay:",
             None,
             False,
         )
@@ -203,13 +201,25 @@ class LocusAppDelegate(AppKit.NSObject):
         if self.webview is not None:
             self.webview.evaluateJavaScript_completionHandler_(code, None)
 
-    def showPanelFromTimer_(self, _timer):
-        self.showPanel_(None)
+    def pollSetupOverlay_(self, _timer):
+        if self.setup_webview is None or self.setup_window is None:
+            return
 
-    def hideLaunchOverlay_(self, _timer):
-        if self.launch_window is not None:
-            self.launch_window.orderOut_(None)
-            self.launch_window = None
+        def completion(result, _error):
+            should_close = bool(result)
+            if should_close:
+                if self.setup_window is not None:
+                    self.setup_window.orderOut_(None)
+                self.setup_window = None
+                self.setup_webview = None
+                self.showPanel_(None)
+            else:
+                self._schedule_setup_poll()
+
+        self.setup_webview.evaluateJavaScript_completionHandler_(
+            "window.locusSetupShouldClose ? window.locusSetupShouldClose() : false;",
+            completion,
+        )
 
     def showPanel_(self, _sender):
         if self.panel is None:

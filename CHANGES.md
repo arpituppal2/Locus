@@ -1,5 +1,11 @@
 ## CHANGES.md
 
+### Cinematic first-run setup
+- Rebuilt first-run setup as a full-screen translucent desktop surface with staged launch, hotkey, command bar, voice, and local-first moments.
+- Switched the dashboard to local Apple system fonts and removed CDN font/script dependencies from the app shell.
+- Added subtle Web Audio feedback hooks for setup, completion, and voice mode; they are low-volume and never block setup.
+- Updated the macOS menu-bar host so first run opens an interactive full-screen setup overlay before revealing the command surface.
+
 ### Native Mac menu-bar overlay
 - Reworked the macOS app wrapper into a menu-bar accessory app with a floating transparent WebKit panel.
 - Added a full-screen launch veil, menu-bar status item, Option+Space and double-Command summon hooks, and click-away poof/back behavior.
