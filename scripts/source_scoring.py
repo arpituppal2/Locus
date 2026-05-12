@@ -1,54 +1,67 @@
-"""Source scoring with learned quality adjustments (fixes #35-36)."""
+"""Source credibility scoring for multi-source web research."""
 from __future__ import annotations
+
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
-HIGH_TRUST = {
-    "nature.com": 7, "science.org": 7, "nejm.org": 7, "thelancet.com": 7,
-    "arxiv.org": 6, "pubmed.ncbi.nlm.nih.gov": 7, "scholar.google.com": 6,
-    "reuters.com": 6, "apnews.com": 6, "bbc.com": 5, "nytimes.com": 5,
-    "theguardian.com": 5, "wikipedia.org": 4, "gov": 6,
+KNOWN_NEWS = {
+    "reuters.com",
+    "apnews.com",
+    "bbc.com",
+    "nytimes.com",
+    "washingtonpost.com",
+    "wsj.com",
+    "theguardian.com",
+    "ft.com",
+    "npr.org",
 }
-LOW_TRUST = {"reddit.com": 2, "twitter.com": 2, "x.com": 2, "pinterest.com": 1}
 
-_learned: dict[str, float] = {}
+
+@dataclass
+class SourceScore:
+    url: str
+    score: float
+    domain_tier: str
+    claim_count: int
 
 
 def domain_of(url: str) -> str:
-    """Return the hostname of a URL, or empty string on failure."""
     try:
-        return urlparse(url).hostname or ""
+        return (urlparse(url).hostname or "").lower()
     except Exception:
         return ""
 
 
-def score_source(url: str, title: str = "", body: str = "") -> int:
+def _domain_base_score(domain: str) -> tuple[float, str]:
+    if domain.endswith("wikipedia.org"):
+        return 0.90, "wikipedia"
+    if domain.endswith(".gov") or domain.endswith(".edu"):
+        return 0.85, "public_institution"
+    if any(domain.endswith(news) for news in KNOWN_NEWS):
+        return 0.75, "known_news"
+    return 0.50, "other"
+
+
+def _word_count(text: str) -> int:
+    return len([w for w in (text or "").split() if w.strip()])
+
+
+def score_source(url: str, content: str, claims: list[str] | None = None) -> SourceScore:
     domain = domain_of(url)
+    base, tier = _domain_base_score(domain)
 
-    score = 3
-    for key, val in HIGH_TRUST.items():
-        if domain.endswith(key):
-            score = val
-            break
-    for key, val in LOW_TRUST.items():
-        if domain.endswith(key):
-            score = val
-            break
+    word_count = _word_count(content)
+    length_bonus = 0.10 if word_count > 500 else 0.0
 
-    penalties = 0
-    title_lower = (title or "").lower()
-    if any(w in title_lower for w in ("live updates", "breaking", "just in")):
-        penalties += 1
-    if len(body or "") < 300:
-        penalties += 1
-    if not body or body.strip() == "":
-        penalties += 2
+    claim_count = len(claims or [])
+    word_blocks = max(1.0, word_count / 500.0)
+    density = claim_count / word_blocks
+    density_bonus = min(0.12, max(0.0, density / 40.0))
 
-    learned_delta = _learned.get(domain, 0.0)
-    final = max(1, min(7, score - penalties + int(learned_delta)))
-    return final
-
-
-def record_quality(url: str, was_useful: bool):
-    domain = domain_of(url)
-    delta = 0.3 if was_useful else -0.2
-    _learned[domain] = _learned.get(domain, 0.0) + delta
+    final_score = min(1.0, round(base + length_bonus + density_bonus, 4))
+    return SourceScore(
+        url=url,
+        score=final_score,
+        domain_tier=tier,
+        claim_count=claim_count,
+    )

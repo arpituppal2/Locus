@@ -1,0 +1,14 @@
+{
+  "enabled_by_default": true,
+  "plugin_dirs": [
+    "plugins"
+  ],
+  "enabled_plugins": [],
+  "disabled_plugins": [],
+  "connector_policy": {
+    "network_checks_on_status": false,
+    "require_explicit_send": true
+  },
+  "autonomy_mode": "guided",
+  "tool_policies": {}
+}

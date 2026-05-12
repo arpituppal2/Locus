@@ -1,10 +1,9 @@
-"""Subagent dispatcher: local Ollama | AI chatbot UI | cloud worker.
+"""Subagent dispatcher: local Ollama first, with explicit opt-in external routes.
 
 Routing priority:
-  1. If task is marked chatbot_mode or complexity >= threshold → chatbot UI
-  2. If local RAM allows → run_locally via Ollama
-  3. Cloud worker (if configured) → cloud HTTP POST
-  4. Fallback → local Ollama regardless
+  1. Local Ollama via the selected memory-safe model profile
+  2. Browser chatbot UI only when LOCAL_COMPUTER_ALLOW_EXTERNAL_AI=1
+  3. Cloud worker only when LOCAL_COMPUTER_ALLOW_CLOUD_WORKERS=1
 """
 from __future__ import annotations
 
@@ -18,18 +17,21 @@ import psutil
 
 ROOT = Path(__file__).resolve().parent.parent
 
-_MODELS_PATH = ROOT / "configs" / "models.json"
-_MODELS = json.loads(_MODELS_PATH.read_text()) if _MODELS_PATH.exists() else {}
+from scripts.model_selector import effective_models_config
+from scripts.resource_policy import resource_budget
+from scripts.runtime_policy import cloud_workers_allowed, external_ai_allowed
 
-MODEL_PLANNER = _MODELS.get("planner", "qwen3:8b")
-MODEL_HEAVY   = _MODELS.get("heavy",   "qwen3:14b")
+_MODELS = effective_models_config()
 
-# If task complexity_score >= this, route to chatbot UI instead of local 14b
+MODEL_PLANNER = _MODELS.get("planner", "qwen3:1.7b")
+MODEL_HEAVY   = _MODELS.get("heavy",   MODEL_PLANNER)
+
+# If external AI is explicitly enabled, complexity_score >= this can route to chatbot UI.
 CHATBOT_THRESHOLD = _MODELS.get("chatbot_threshold", 8)
 
 # Max simultaneous local Ollama subagents
-# router+actor are qwen3:4b (~2.5GB each); 2 parallel fits without swapping.
-MAX_LOCAL_PARALLEL = _MODELS.get("max_local_parallel", 2)
+# M-series unified memory: default to one local model unless the selector says otherwise.
+MAX_LOCAL_PARALLEL = _MODELS.get("max_local_parallel", 1)
 
 CLOUD_BACKENDS = {
     "cloud_run":    {"check_cmd": "gcloud config get-value project"},
@@ -46,14 +48,9 @@ def _available_ram_gb() -> float:
 
 
 def _ram_ok_for_heavy() -> bool:
-    """Is there enough free RAM to run qwen3:14b?
-
-    14b Q4 ≈ 8 GB in unified memory.
-    On 16GB with macOS kernel (~2GB) + Chromium (~1.5GB) we typically have
-    ~7.5 GB free when idle — just enough. Threshold: 7.0 GB so the check
-    passes in practice instead of always falling back to planner.
-    """
-    return _available_ram_gb() >= 7.0
+    """Is there enough free RAM inside the configured Locus budget."""
+    budget = resource_budget()
+    return _available_ram_gb() >= min(6.0, budget.usable_for_models_gb * 0.75)
 
 
 def _backend_available(name: str) -> bool:
@@ -114,11 +111,11 @@ def dispatch(task: Dict[str, Any]) -> Dict[str, Any]:
 
     Task dict keys:
       goal (str)             — what the agent should do
-      complexity (int)       — 0-10; if >= chatbot_threshold → chatbot
-      chatbot_mode (bool)    — force chatbot routing
+      complexity (int)       — 0-10; external AI can use this for routing only when enabled
+      chatbot_mode (bool)    — request chatbot routing when external AI is enabled
       chatbot_backend (str)  — override backend (gemini|chatgpt|claude|copilot|perplexity)
-      worker_url (str)       — if set, try cloud HTTP worker first
-      local_only (bool)      — skip chatbot/cloud even if RAM is tight
+      worker_url (str)       — if set, try cloud HTTP worker only when cloud workers are enabled
+      local_only (bool)      — force local execution
     """
     goal = task.get("goal", "")
     complexity = int(task.get("complexity", 0))
@@ -126,22 +123,29 @@ def dispatch(task: Dict[str, Any]) -> Dict[str, Any]:
     local_only = bool(task.get("local_only", False))
     worker_url = task.get("worker_url", "")
 
-    # 1. Explicit chatbot flag OR complexity too high for local heavy model
-    if not local_only and (force_chatbot or complexity >= CHATBOT_THRESHOLD):
+    can_use_external_ai = external_ai_allowed() and not local_only
+    can_use_cloud = cloud_workers_allowed() and not local_only
+
+    # 1. Explicit chatbot flag OR complexity too high, but only after opt-in.
+    if can_use_external_ai and (force_chatbot or complexity >= CHATBOT_THRESHOLD):
         result = _run_via_chatbot(task)
         if result["status"] == "done":
             return result
         logging.warning(f"[subagents] chatbot failed for '{goal[:60]}', falling back to local")
+    elif force_chatbot and not can_use_external_ai:
+        logging.warning("[subagents] external AI routing is disabled; using local planner model")
 
-    # 2. Cloud worker (if configured and available)
-    if not local_only and worker_url:
+    # 2. Cloud worker (if configured, available, and explicitly allowed)
+    if can_use_cloud and worker_url:
         return _run_cloud_worker(task, worker_url)
+    if worker_url and not can_use_cloud:
+        logging.warning("[subagents] cloud worker routing is disabled; using local planner model")
 
     # 3. Local heavy model — only if we have enough unified memory
     if not _ram_ok_for_heavy() and "heavy" in task.get("preferred_model", ""):
         logging.warning(
             f"[subagents] Only {_available_ram_gb():.1f} GB free — "
-            "heavy model needs 7.0 GB; downgrading to planner model"
+            "heavy model exceeds current budget; downgrading to planner model"
         )
 
     return _run_locally(task)
@@ -161,7 +165,7 @@ def run_parallel_subagents(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     local_sem = threading.Semaphore(MAX_LOCAL_PARALLEL)
 
     def _run(idx: int, task: Dict[str, Any]) -> None:
-        is_chatbot = (
+        is_chatbot = external_ai_allowed() and (
             task.get("chatbot_mode")
             or int(task.get("complexity", 0)) >= CHATBOT_THRESHOLD
         )
@@ -190,8 +194,8 @@ def pick_subagent(goal: str, state: dict, history: list) -> str:
     g = (goal or "").lower()
     url = (state.get("url") or "").lower()
 
-    # Force chatbot for complex reasoning tasks
-    if any(x in g for x in [
+    # Force chatbot for complex reasoning tasks only when external AI is enabled.
+    if external_ai_allowed() and any(x in g for x in [
         "ask gemini", "use claude", "ask chatgpt", "ask copilot", "via chatgpt",
         "ask perplexity", "deep analysis", "synthesize", "explain in depth",
     ]):

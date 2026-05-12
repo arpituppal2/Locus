@@ -1,446 +1,838 @@
-"""local-computer UI server — Flask backend for the Perplexity Computer–style dashboard.
-
-Endpoints
----------
-GET  /                     → serve dashboard/index.html
-GET  /api/ping             → health check
-POST /api/goal             → kick off a mission (body: {"goal": "..."})
-POST /api/inject           → inject a mid-run instruction (body: {"text": "..."})
-GET  /api/events           → SSE stream of agent events
-GET  /api/status           → current agent state JSON
-POST /api/permission       → user grants or denies a pending permission request
-POST /api/cancel           → cancel the running mission
-GET  /api/result           → last mission result markdown
-POST /api/login_creds      → supply credentials for a login task
-POST /api/login_take_over  → signal user has taken over browser for login
-POST /api/login_deny       → skip the login entirely
-"""
+#!/usr/bin/env python3
+"""WebSocket + static dashboard server for Locus."""
 from __future__ import annotations
+
 import argparse
+import asyncio
 import json
-import os
-import queue
-import threading
-import time
-import traceback
+import logging
+import math
+import sys
+from dataclasses import asdict
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, Response, jsonify, request, send_from_directory
-from flask_cors import CORS
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-ROOT      = Path(__file__).resolve().parent.parent
-DASHBOARD = ROOT / "dashboard"
+from websockets.exceptions import ConnectionClosed
+from websockets.server import WebSocketServerProtocol, serve
 
-# Persistent Playwright profile — survives across runs, stores cookies/session
-BROWSER_PROFILE = ROOT / "browser_profile"
-BROWSER_PROFILE.mkdir(exist_ok=True)
+from scripts.model_selector import recommend_models
+from scripts.plugin_manager import autonomy_mode_detail, registry_snapshot, set_autonomy_mode, set_plugin_enabled, set_tool_policy
+from scripts.plugin_runtime import classify_shell_command, execute_tool, preview_tool, render_tool_result, tool_catalog, tool_metadata
+from scripts.resource_policy import resource_budget
+from scripts.run_history import list_runs, list_tool_events, store_run, store_tool_event
+from scripts.runtime_policy import local_models_allowed, runtime_summary, update_runtime
+from scripts.setup_manager import (
+    accessibility_status,
+    full_disk_access_status,
+    open_accessibility_settings,
+    open_full_disk_access_settings,
+    run_app_setup,
+    setup_status,
+)
+from scripts.upload_store import list_uploads, save_uploads
+from scripts.workspace_index import build_workspace_index, load_cached_index
 
-app = Flask(__name__, static_folder=str(DASHBOARD), static_url_path="")
-CORS(app)
+ROOT = Path(__file__).resolve().parent.parent
+DASHBOARD_HTML = ROOT / "dashboard" / "index.html"
 
-# ── Shared state ──────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
-_state_lock = threading.Lock()
-_state: dict[str, Any] = {
-    "status":        "idle",
-    "goal":          "",
-    "current_task":  "",
-    "agent_role":    "",
-    "step":          0,
-    "total_steps":   0,
-    "url":           "",
-    "result":        "",
-    "error":         "",
-    "tasks":         [],
-    "timeline":      [],
-    "login_pending": False,
-    "login_site":    "",
-}
-
-_event_queue:         queue.Queue  = queue.Queue(maxsize=500)
-_permission_event     = threading.Event()
-_permission_response: dict         = {}
-_cancel_event         = threading.Event()
-_mission_thread: threading.Thread | None = None
-_inject_queue:   queue.Queue       = queue.Queue(maxsize=32)
-_login_event     = threading.Event()
-_login_response: dict              = {}
+CLIENTS: set[WebSocketServerProtocol] = set()
+CLIENT_UPLOADS: dict[int, list[dict[str, Any]]] = {}
+RUN_LOCK = asyncio.Lock()
+SETUP_LOCK = asyncio.Lock()
+LAST_RESULT: dict[str, Any] = {}
 
 
-def _push(kind: str, text: str, **extra):
-    entry = {"ts": time.time(), "kind": kind, "text": text, **extra}
-    with _state_lock:
-        _state["timeline"].append(entry)
+def _safety_summary() -> dict[str, Any]:
+    runtime = runtime_summary()
+    budget = resource_budget()
     try:
-        _event_queue.put_nowait(entry)
-    except queue.Full:
-        pass
+        model_recommendation = recommend_models()
+    except Exception:
+        model_recommendation = {}
+    acceleration = model_recommendation.get("gpu_acceleration", {}) if isinstance(model_recommendation, dict) else {}
+    plugins = registry_snapshot()
+    catalog = tool_catalog()
+    config = plugins.get("config", {})
+    autonomy_mode = str(config.get("autonomy_mode") or "guided")
+
+    enabled_plugins = [plugin for plugin in plugins.get("plugins", []) if plugin.get("enabled")]
+    risk_counts: dict[str, int] = {}
+    policy_counts = {"allow": 0, "ask": 0, "block": 0}
+    pending_tools: list[dict[str, str]] = []
+    approval_required = 0
+    for plugin in enabled_plugins:
+        catalog_item = (catalog.get(plugin.get("id", ""), {}) or {})
+        implemented = set(catalog_item.get("implemented", []))
+        catalog_tools = {tool.get("name"): tool for tool in catalog_item.get("tools", [])}
+        for tool in plugin.get("tools", []):
+            risk = str(tool.get("risk") or "read")
+            risk_counts[risk] = risk_counts.get(risk, 0) + 1
+            if tool.get("name") not in implemented:
+                pending_tools.append({"plugin": str(plugin.get("id")), "tool": str(tool.get("name"))})
+            catalog_tool = catalog_tools.get(tool.get("name")) or {}
+            policy = str(catalog_tool.get("policy") or ("allow" if risk == "read" else "ask"))
+            if policy in policy_counts:
+                policy_counts[policy] += 1
+            if catalog_tool.get("requires_approval"):
+                approval_required += 1
+
+    connectors = []
+    for plugin in enabled_plugins:
+        connector = plugin.get("connector")
+        if connector:
+            connectors.append(
+                {
+                    "plugin": plugin.get("id"),
+                    "name": plugin.get("name"),
+                    "kind": plugin.get("status", {}).get("kind"),
+                    "configured": bool(plugin.get("status", {}).get("configured")),
+                    "detail": plugin.get("status", {}).get("detail", ""),
+                }
+            )
+
+    pressure = str(getattr(budget, "memory_pressure", "unknown") or "unknown")
+    available = getattr(budget, "available_ram_gb", None)
+    ram_detail = f"{budget.max_ram_gb:.1f} GB max; {budget.reserved_system_gb:.1f} GB reserved"
+    if available is not None:
+        ram_detail += f"; {available:.1f} GB available now ({pressure})"
+    if getattr(budget, "pressure_adjusted", False):
+        ram_detail += f"; adjusted from {budget.configured_max_ram_gb:.1f} GB"
+
+    posture = [
+        {
+            "id": "os",
+            "title": "Operating System",
+            "state": "done" if runtime.get("supported_os") else "error",
+            "detail": (runtime.get("os") or {}).get("name", "Unknown") + (" supported" if runtime.get("supported_os") else " unsupported"),
+        },
+        {
+            "id": "local_models",
+            "title": "Local Models",
+            "state": "warning" if runtime.get("allow_local_models") else "done",
+            "detail": "enabled; local RAM/GPU pressure possible" if runtime.get("allow_local_models") else "off; no model loaded by default",
+        },
+        {
+            "id": "external_ai",
+            "title": "External AI",
+            "state": "warning" if runtime.get("allow_external_ai") else "done",
+            "detail": "enabled" if runtime.get("allow_external_ai") else "off by default",
+        },
+        {
+            "id": "cloud_workers",
+            "title": "Cloud Workers",
+            "state": "warning" if runtime.get("allow_cloud_workers") else "done",
+            "detail": "enabled" if runtime.get("allow_cloud_workers") else "off by default",
+        },
+        {
+            "id": "gpu_cap",
+            "title": "GPU Cap",
+            "state": "done",
+            "detail": f"{budget.gpu_limit_pct:.0f}% maximum",
+        },
+        {
+            "id": "acceleration",
+            "title": "Acceleration",
+            "state": "warning" if acceleration.get("kind") == "cpu" else "done",
+            "detail": str(acceleration.get("tier") or acceleration.get("kind") or "local"),
+        },
+        {
+            "id": "model_guard",
+            "title": "Model Launch Guard",
+            "state": "warning" if runtime.get("allow_local_models") else "done",
+            "detail": "model launch commands allowed" if runtime.get("allow_local_models") else "blocks shell commands that start local models",
+        },
+        {
+            "id": "ram_budget",
+            "title": "RAM Budget",
+            "state": "warning" if budget.low_ram_mode or pressure in {"critical", "high"} else "done",
+            "detail": ram_detail,
+        },
+        {
+            "id": "plugins",
+            "title": "Plugins",
+            "state": "done",
+            "detail": f"{plugins.get('enabled_count', 0)} enabled / {plugins.get('total_count', 0)} installed",
+        },
+        {
+            "id": "autonomy",
+            "title": "Autonomy",
+            "state": "warning" if autonomy_mode == "full_local" else "done",
+            "detail": autonomy_mode.replace("_", " "),
+        },
+        {
+            "id": "approvals",
+            "title": "Tool Approvals",
+            "state": "done",
+            "detail": f"{approval_required} tool(s) ask-gated",
+        },
+        {
+            "id": "policy",
+            "title": "Permission Policy",
+            "state": "warning" if policy_counts.get("block") else "done",
+            "detail": f"{policy_counts['allow']} allow; {policy_counts['ask']} ask; {policy_counts['block']} blocked",
+        },
+    ]
+
+    return {
+        "runtime": runtime,
+        "resource_budget": asdict(budget),
+        "plugins": {
+            "enabled_count": plugins.get("enabled_count", 0),
+            "total_count": plugins.get("total_count", 0),
+            "autonomy_mode": autonomy_mode,
+            "autonomy_detail": autonomy_mode_detail(autonomy_mode),
+            "risk_counts": risk_counts,
+            "pending_tools": pending_tools[:40],
+            "approval_required": approval_required,
+            "policy_counts": policy_counts,
+            "connectors": connectors,
+        },
+        "tool_audit": {"recent": list_tool_events(limit=8)},
+        "posture": posture,
+        "warnings": list(budget.warnings),
+    }
 
 
-def _set_state(**kw):
-    with _state_lock:
-        _state.update(kw)
+async def _send_tool_audit(ws: WebSocketServerProtocol | None = None, *, limit: int = 12) -> None:
+    payload = {"type": "tool_audit", "data": {"events": list_tool_events(limit=limit)}}
+    if ws is None:
+        await _broadcast(payload)
+    else:
+        await ws.send(json.dumps(payload, ensure_ascii=False))
 
 
-# ── Permission bridge ─────────────────────────────────────────────────────
-
-def request_permission(action_type: str, description: str, details: dict | None = None) -> bool:
-    global _permission_response
-    _permission_event.clear()
-    _permission_response = {}
-    _set_state(status="waiting_permission")
-    _push("permission_request", description,
-          action_type=action_type, details=details or {})
-    granted = _permission_event.wait(timeout=120)
-    if not granted:
-        _push("permission_timeout", "No response — defaulting to deny")
-        _set_state(status="acting")
-        return False
-    approved = _permission_response.get("approved", False)
-    _push("permission_response", "Approved" if approved else "Denied", approved=approved)
-    _set_state(status="acting")
-    return approved
-
-
-# ── Login bridge ──────────────────────────────────────────────────────────
-
-def request_login(site: str, page) -> bool:
-    global _login_response
-    _login_event.clear()
-    _login_response = {}
-    _set_state(status="waiting_login", login_pending=True, login_site=site)
-    _push("login_required", f"Login required for: {site}",
-          site=site, action_type="login")
-    resolved = _login_event.wait(timeout=180)
-    _set_state(login_pending=False, login_site="")
-    if not resolved:
-        _push("login_timeout", "Login timed out — skipping")
-        _set_state(status="acting")
-        return False
-    mode = _login_response.get("mode")
-    if mode == "deny":
-        _push("login_denied", "User skipped login")
-        _set_state(status="acting")
-        return False
-    if mode == "creds":
-        _push("login_creds_provided", "Credentials received — filling form")
-        _set_state(status="acting")
-        return True
-    if mode == "takeover":
-        _push("login_takeover", "You have control — complete login then click Done")
-        _set_state(status="waiting_login_takeover")
-        done_event = threading.Event()
-        _login_response["done_event"] = done_event
-        done_event.wait(timeout=300)
-        _push("login_takeover_done", "User finished login — resuming")
-        _set_state(status="acting")
-        return True
-    return False
-
-
-def get_login_creds() -> dict:
-    return {k: v for k, v in _login_response.items()
-            if k in ("username", "password", "email")}
-
-
-# ── Injection ─────────────────────────────────────────────────────────────
-
-def pop_injected_instruction() -> str | None:
+async def _record_tool_event(**event: Any) -> None:
     try:
-        return _inject_queue.get_nowait()
-    except queue.Empty:
+        await asyncio.to_thread(store_tool_event, **event)
+    except Exception:
+        logging.exception("Tool audit logging failed")
+
+
+async def _broadcast(message: dict[str, Any]) -> None:
+    if not CLIENTS:
+        return
+    payload = json.dumps(message, ensure_ascii=False)
+    stale: list[WebSocketServerProtocol] = []
+    for client in CLIENTS:
+        try:
+            await client.send(payload)
+        except ConnectionClosed:
+            stale.append(client)
+    for client in stale:
+        CLIENTS.discard(client)
+
+
+async def _send_memory_snapshot(ws: WebSocketServerProtocol) -> None:
+    try:
+        from scripts.long_term_memory import list_recent_queries
+
+        recent = list_recent_queries(limit=5)
+    except Exception:
+        recent = []
+    await ws.send(json.dumps({"type": "memory", "data": recent}, ensure_ascii=False))
+
+
+async def _send_setup_status(ws: WebSocketServerProtocol) -> None:
+    await ws.send(json.dumps({"type": "setup_status", "data": setup_status()}, ensure_ascii=False))
+
+
+async def _run_setup_flow() -> None:
+    if SETUP_LOCK.locked():
+        await _broadcast({"type": "setup_log", "data": {"state": "running", "detail": "setup already running"}})
+        return
+
+    async with SETUP_LOCK:
+        loop = asyncio.get_running_loop()
+
+        def emit(event: dict[str, Any]) -> None:
+            future = asyncio.run_coroutine_threadsafe(
+                _broadcast({"type": "setup_step", "data": event}),
+                loop,
+            )
+            future.result(timeout=10)
+
+        await _broadcast({"type": "setup_status", "data": {**setup_status(), "running": True}})
+        try:
+            status = await asyncio.to_thread(run_app_setup, emit)
+            await _broadcast({"type": "setup_done", "data": status})
+            await _broadcast({"type": "setup_status", "data": {**status, "running": False}})
+        except Exception as exc:
+            logging.exception("Setup failed")
+            await _broadcast({"type": "setup_error", "data": {"error": str(exc)}})
+            await _broadcast({"type": "setup_status", "data": {**setup_status(), "running": False}})
+
+
+async def _run_query(query: str, uploads: list[dict[str, Any]] | None = None, *, plan_only: bool = False) -> None:
+    global LAST_RESULT
+
+    async with RUN_LOCK:
+        await _broadcast({"type": "status", "data": {"state": "running"}})
+
+        async def _emit(event: dict[str, Any]) -> None:
+            await _broadcast(event)
+
+        try:
+            if plan_only:
+                from scripts.workspace_agent import run_workspace_query
+
+                result = await run_workspace_query(query, uploads=uploads or [], emit_event=_emit, plan_only=True)
+            elif local_models_allowed():
+                from scripts.long_term_memory import get_cached_answer
+                from scripts.orchestrator import run_research_query
+
+                cached = get_cached_answer(query)
+                if cached:
+                    await _broadcast({"type": "thinking", "data": "Found cached answer, refreshing with live research"})
+                result = await run_research_query(query, emit_event=_emit)
+                try:
+                    result["run_id"] = store_run(query, "research", result)
+                except Exception:
+                    result["run_id"] = None
+            else:
+                from scripts.workspace_agent import run_workspace_query
+
+                result = await run_workspace_query(query, uploads=uploads or [], emit_event=_emit)
+            LAST_RESULT = result
+            await _broadcast({"type": "status", "data": {"state": "idle"}})
+            try:
+                from scripts.long_term_memory import list_recent_queries
+
+                memory = list_recent_queries(limit=5)
+            except Exception:
+                memory = []
+            await _broadcast({"type": "memory", "data": memory})
+            await _send_tool_audit()
+        except Exception as exc:
+            logging.exception("Query execution failed")
+            await _broadcast({"type": "status", "data": {"state": "error"}})
+            await _broadcast({"type": "thinking", "data": f"Error: {exc}"})
+            await _broadcast({"type": "done", "data": {"elapsed_ms": 0, "sources_used": 0}})
+
+
+async def _handle_ws(ws: WebSocketServerProtocol, path: str) -> None:
+    if path not in ("/", "/stream"):
+        await ws.close(code=1008, reason="Unsupported endpoint")
+        return
+
+    CLIENTS.add(ws)
+    try:
+        try:
+            await ws.send(json.dumps({"type": "status", "data": {"state": "idle"}}, ensure_ascii=False))
+            await _send_memory_snapshot(ws)
+            await _send_setup_status(ws)
+        except ConnectionClosed:
+            return
+
+        async for raw in ws:
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            msg_type = str(msg.get("type", "")).strip().lower()
+            if msg_type == "query":
+                payload = msg.get("data", "")
+                uploads = CLIENT_UPLOADS.get(id(ws), [])
+                if isinstance(payload, dict):
+                    query = str(payload.get("query") or payload.get("text") or "").strip()
+                    plan_only = bool(payload.get("plan_only", False))
+                    payload_uploads = payload.get("uploads")
+                    if isinstance(payload_uploads, list):
+                        uploads = payload_uploads
+                else:
+                    query = str(payload).strip()
+                    plan_only = False
+                if not query:
+                    await ws.send(json.dumps({"type": "thinking", "data": "Query cannot be empty"}))
+                    continue
+                asyncio.create_task(_run_query(query, uploads=uploads, plan_only=plan_only))
+            elif msg_type == "upload":
+                payload = msg.get("data") or {}
+                files = payload.get("files") if isinstance(payload, dict) else []
+                if not isinstance(files, list):
+                    files = []
+                saved = save_uploads(files)
+                CLIENT_UPLOADS.setdefault(id(ws), []).extend([item for item in saved if item.get("ok")])
+                await ws.send(json.dumps({"type": "upload", "data": saved}, ensure_ascii=False))
+            elif msg_type == "tool":
+                payload = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+                plugin = str(payload.get("plugin") or "")
+                tool = str(payload.get("tool") or "")
+                args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
+                meta = tool_metadata(plugin, tool)
+                shell_safety = classify_shell_command(args) if plugin == "shell" and tool == "run_command" else None
+                if shell_safety:
+                    meta["shell_safety"] = shell_safety
+                preview = await asyncio.to_thread(preview_tool, plugin, tool, args)
+                if shell_safety and not preview.get("shell_safety"):
+                    preview["shell_safety"] = shell_safety
+                meta["preview"] = preview
+                if meta.get("blocked") or (shell_safety and shell_safety.get("blocked")):
+                    result = await asyncio.to_thread(execute_tool, plugin, tool, args)
+                    await _record_tool_event(
+                        plugin=plugin,
+                        tool=tool,
+                        state="blocked",
+                        args=args,
+                        risk=str(meta.get("risk") or "unknown"),
+                        ok=False,
+                        result=result,
+                        reason=str(payload.get("reason") or result.get("error") or result.get("stderr") or "blocked by local safety policy"),
+                    )
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "tool",
+                                "data": {
+                                    "state": "error",
+                                    "plugin": plugin,
+                                    "tool": tool,
+                                    "ok": False,
+                                    "error": result.get("error") or "tool blocked",
+                                },
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                    await ws.send(json.dumps({"type": "token", "data": render_tool_result(result)}, ensure_ascii=False))
+                    await ws.send(json.dumps({"type": "done", "data": {"elapsed_ms": 0, "sources_used": 0}}, ensure_ascii=False))
+                    await _send_tool_audit(ws)
+                    continue
+                needs_approval = bool(meta.get("requires_approval") or (shell_safety and shell_safety.get("requires_approval")))
+                if needs_approval and payload.get("confirmed") is not True:
+                    await _record_tool_event(
+                        plugin=plugin,
+                        tool=tool,
+                        state="approval_required",
+                        args=args,
+                        risk=str(meta.get("risk") or "unknown"),
+                        reason=str(payload.get("reason") or (shell_safety or {}).get("approval_reason") or ""),
+                    )
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "tool_approval_required",
+                                "data": {
+                                    **meta,
+                                    "args": args,
+                                    "reason": str(payload.get("reason") or (shell_safety or {}).get("approval_reason") or ""),
+                                },
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                    await _send_tool_audit(ws)
+                    continue
+                if needs_approval and payload.get("confirmed") is True:
+                    await _record_tool_event(
+                        plugin=plugin,
+                        tool=tool,
+                        state="approved",
+                        args=args,
+                        risk=str(meta.get("risk") or "unknown"),
+                        reason=str(payload.get("reason") or "approved once"),
+                    )
+                await ws.send(
+                    json.dumps(
+                        {"type": "tool", "data": {"state": "running", "plugin": plugin, "tool": tool, "args": args}},
+                        ensure_ascii=False,
+                    )
+                )
+                result = await asyncio.to_thread(execute_tool, plugin, tool, args)
+                await _record_tool_event(
+                    plugin=plugin,
+                    tool=tool,
+                    state="completed",
+                    args=args,
+                    risk=str(meta.get("risk") or "unknown"),
+                    ok=bool(result.get("ok")),
+                    result=result,
+                    reason=str(payload.get("reason") or ""),
+                )
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "tool",
+                            "data": {
+                                "state": "done" if result.get("ok") else "error",
+                                "plugin": plugin,
+                                "tool": tool,
+                                "ok": bool(result.get("ok")),
+                                "error": result.get("error") or result.get("stderr"),
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                await ws.send(json.dumps({"type": "token", "data": render_tool_result(result)}, ensure_ascii=False))
+                await ws.send(json.dumps({"type": "done", "data": {"elapsed_ms": 0, "sources_used": 0}}, ensure_ascii=False))
+                await _send_tool_audit(ws)
+            elif msg_type == "tool_audit":
+                payload = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+                state = str(payload.get("state") or "noted")
+                plugin = str(payload.get("plugin") or "")
+                tool = str(payload.get("tool") or "")
+                args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
+                if plugin and tool:
+                    meta = tool_metadata(plugin, tool)
+                    await _record_tool_event(
+                        plugin=plugin,
+                        tool=tool,
+                        state=state,
+                        args=args,
+                        risk=str(payload.get("risk") or meta.get("risk") or "unknown"),
+                        ok=None,
+                        reason=str(payload.get("reason") or ""),
+                    )
+                await _send_tool_audit(ws)
+            elif msg_type == "settings":
+                payload = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+                updates: dict[str, Any] = {}
+                try:
+                    if "max_ram_gb" in payload:
+                        raw = payload.get("max_ram_gb")
+                        if raw in (None, ""):
+                            updates["max_ram_gb"] = None
+                        else:
+                            value = float(raw)
+                            if not math.isfinite(value) or value <= 0:
+                                raise ValueError("max_ram_gb must be a positive number")
+                            updates["max_ram_gb"] = max(2.0, value)
+                    if "auto_select_models" in payload:
+                        updates["auto_select_models"] = bool(payload.get("auto_select_models"))
+                    if updates:
+                        update_runtime(updates)
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "settings",
+                                "data": {
+                                    "runtime": runtime_summary(),
+                                    "recommendation": recommend_models(),
+                                    "resource_budget": asdict(resource_budget()),
+                                },
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                except Exception as exc:
+                    await ws.send(json.dumps({"type": "thinking", "data": f"Settings update failed: {exc}"}))
+            elif msg_type == "plugin_setting":
+                payload = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+                plugin_id = str(payload.get("plugin") or payload.get("plugin_id") or "").strip()
+                enabled = bool(payload.get("enabled"))
+                try:
+                    snapshot = await asyncio.to_thread(set_plugin_enabled, plugin_id, enabled)
+                    await ws.send(
+                        json.dumps(
+                            {"type": "plugin_setting", "data": {"plugin": plugin_id, "enabled": enabled, "snapshot": snapshot}},
+                            ensure_ascii=False,
+                        )
+                    )
+                except Exception as exc:
+                    await ws.send(json.dumps({"type": "plugin_setting", "data": {"plugin": plugin_id, "error": str(exc)}}))
+            elif msg_type == "tool_policy":
+                payload = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+                plugin_id = str(payload.get("plugin") or payload.get("plugin_id") or "").strip()
+                tool = str(payload.get("tool") or "").strip()
+                policy = str(payload.get("policy") or "default").strip().lower()
+                try:
+                    snapshot = await asyncio.to_thread(set_tool_policy, plugin_id, tool, policy)
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "tool_policy",
+                                "data": {
+                                    "plugin": plugin_id,
+                                    "tool": tool,
+                                    "policy": policy,
+                                    "snapshot": snapshot,
+                                    "tools": tool_catalog(),
+                                    "safety": _safety_summary(),
+                                },
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                except Exception as exc:
+                    await ws.send(
+                        json.dumps(
+                            {"type": "tool_policy", "data": {"plugin": plugin_id, "tool": tool, "policy": policy, "error": str(exc)}},
+                            ensure_ascii=False,
+                        )
+                    )
+            elif msg_type == "autonomy_mode":
+                payload = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+                mode = str(payload.get("mode") or "guided").strip().lower()
+                try:
+                    snapshot = await asyncio.to_thread(set_autonomy_mode, mode)
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "autonomy_mode",
+                                "data": {
+                                    "mode": mode,
+                                    "snapshot": snapshot,
+                                    "tools": tool_catalog(),
+                                    "safety": _safety_summary(),
+                                },
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                except Exception as exc:
+                    await ws.send(json.dumps({"type": "autonomy_mode", "data": {"mode": mode, "error": str(exc)}}))
+            elif msg_type == "setup":
+                asyncio.create_task(_run_setup_flow())
+            elif msg_type == "permission":
+                payload = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+                action = str(payload.get("action") or "check")
+                if action == "open_full_disk_access":
+                    result = await asyncio.to_thread(open_full_disk_access_settings)
+                    await ws.send(json.dumps({"type": "permission", "data": {"action": action, **result}}, ensure_ascii=False))
+                elif action == "open_accessibility":
+                    result = await asyncio.to_thread(open_accessibility_settings)
+                    await ws.send(json.dumps({"type": "permission", "data": {"action": action, **result}}, ensure_ascii=False))
+                if action in {"open_accessibility", "check_accessibility", "check_all"}:
+                    status = await asyncio.to_thread(accessibility_status)
+                    await ws.send(json.dumps({"type": "permission", "data": {"action": "check_accessibility", **status}}, ensure_ascii=False))
+                if action in {"open_full_disk_access", "check_full_disk_access", "check_all", "check"}:
+                    status = await asyncio.to_thread(full_disk_access_status)
+                    await ws.send(json.dumps({"type": "permission", "data": {"action": "check_full_disk_access", **status}}, ensure_ascii=False))
+            elif msg_type == "ping":
+                await ws.send(json.dumps({"type": "pong", "data": "ok"}))
+            elif msg_type == "last_result":
+                await ws.send(json.dumps({"type": "result", "data": LAST_RESULT}, ensure_ascii=False))
+            elif msg_type == "memory":
+                await _send_memory_snapshot(ws)
+    finally:
+        CLIENTS.discard(ws)
+        CLIENT_UPLOADS.pop(id(ws), None)
+
+
+async def _process_request(path: str, request_headers):
+    if str(request_headers.get("Upgrade", "")).lower() == "websocket":
         return None
 
-
-# ── Memory proxy ──────────────────────────────────────────────────────────
-
-class _UIMemoryProxy:
-    def __init__(self):
-        from scripts.memory import Memory
-        self._mem = Memory()
-
-    def __getattr__(self, name):
-        return getattr(self._mem, name)
-
-    def request_permission(self, action_type: str, description: str, details=None) -> bool:
-        return request_permission(action_type, description, details)
-
-    def request_login(self, site: str, page) -> bool:
-        return request_login(site, page)
-
-    def get_login_creds(self) -> dict:
-        return get_login_creds()
-
-    def pop_injected_instruction(self) -> str | None:
-        return pop_injected_instruction()
-
-
-# ── Mission runner ────────────────────────────────────────────────────────
-
-def _run_mission_thread(goal: str):
-    try:
-        _set_state(
-            status="thinking", goal=goal, current_task="", step=0,
-            total_steps=0, url="", result="", error="", tasks=[], timeline=[],
-            login_pending=False, login_site="",
+    if path in ("/", "/index.html"):
+        if DASHBOARD_HTML.exists():
+            body = DASHBOARD_HTML.read_bytes()
+            return (
+                HTTPStatus.OK,
+                [
+                    ("Content-Type", "text/html; charset=utf-8"),
+                    ("Content-Length", str(len(body))),
+                ],
+                body,
+            )
+        body = b"dashboard/index.html not found"
+        return (
+            HTTPStatus.NOT_FOUND,
+            [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))],
+            body,
         )
-        _cancel_event.clear()
-        while not _inject_queue.empty():
-            try: _inject_queue.get_nowait()
-            except queue.Empty: break
 
-        _push("start", f"Starting: {goal}")
-        _push("think", "Planning task graph…")
+    if path == "/api/ping":
+        body = json.dumps({"ok": True, "runtime": runtime_summary()}).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(body))),
+            ],
+            body,
+        )
 
-        from scripts.task_planner import build_task_graph
-        tasks = build_task_graph(goal)
-        task_list = [{"id": t["id"], "role": t["role"],
-                      "goal": t["goal"], "status": "pending"} for t in tasks]
-        _set_state(tasks=task_list, total_steps=len(tasks))
-        _push("plan", f"{len(tasks)} task(s) planned",
-              tasks=[{"id": t["id"], "role": t["role"], "goal": t["goal"]}
-                     for t in tasks])
+    if path == "/api/runtime":
+        payload = json.dumps({"runtime": runtime_summary(), "resource_budget": asdict(resource_budget())}).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-        from scripts.agent_roles import get_agent
-        from playwright.sync_api import sync_playwright
+    if path == "/api/safety":
+        payload = json.dumps(_safety_summary()).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-        completed: dict[str, dict] = {}
+    if path == "/api/setup":
+        payload = json.dumps(setup_status()).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-        def _ready(task):
-            return all(d in completed for d in task["depends_on"])
+    if path == "/api/permissions":
+        payload = json.dumps(
+            {
+                "full_disk_access": full_disk_access_status(),
+                "accessibility": accessibility_status(),
+            }
+        ).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-        with sync_playwright() as pw:
-            # ── Persistent context: remembers cookies/sessions across runs
-            ctx  = pw.chromium.launch_persistent_context(
-                str(BROWSER_PROFILE),
-                headless=False,
-                args=["--disable-blink-features=AutomationControlled"],
-            )
-            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+    if path == "/api/plugins":
+        payload = json.dumps(registry_snapshot()).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-            max_rounds = len(tasks) + 4
-            for round_i in range(max_rounds):
-                if _cancel_event.is_set():
-                    _push("cancelled", "Mission cancelled by user")
-                    break
+    if path == "/api/tools":
+        payload = json.dumps(tool_catalog()).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-                injection = pop_injected_instruction()
-                if injection:
-                    _push("injected", f"New instruction: {injection}")
-                    augmented_goal = goal + f"\n\nAdditional instruction: {injection}"
-                    new_tasks = build_task_graph(augmented_goal)
-                    existing_ids = {t["id"] for t in tasks}
-                    for nt in new_tasks:
-                        if nt["id"] not in existing_ids:
-                            tasks.append(nt)
-                            task_list.append({"id": nt["id"], "role": nt["role"],
-                                              "goal": nt["goal"], "status": "pending"})
-                    _set_state(tasks=list(task_list))
-                    _push("plan", f"Re-planned: {len(tasks)} total task(s)")
+    if path == "/api/workspace/index":
+        index = load_cached_index()
+        if index is None:
+            index = build_workspace_index(write_cache=True)
+        payload = json.dumps(index).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-                pending = [t for t in tasks
-                           if t["id"] not in completed and _ready(t)]
-                if not pending:
-                    break
+    if path == "/api/runs":
+        payload = json.dumps({"runs": list_runs(limit=20)}).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-                for t in pending:
-                    needs_permission = t["role"] in ("file", "coder", "browser")
-                    if needs_permission:
-                        desc = (f"Allow agent to perform {t['role'].upper()} action:\n"
-                                f"{t['goal'][:120]}")
-                        if not request_permission(t["role"], desc, {"goal": t["goal"]}):
-                            completed[t["id"]] = {
-                                "role": t["role"],
-                                "findings": "[permission denied by user]",
-                                "status": "denied",
-                            }
-                            for tl in task_list:
-                                if tl["id"] == t["id"]:
-                                    tl["status"] = "denied"
-                            _set_state(tasks=list(task_list))
-                            continue
+    if path == "/api/tool-audit":
+        payload = json.dumps({"events": list_tool_events(limit=30)}).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-                for t in pending:
-                    if t["id"] in completed:
-                        continue
-                    if _cancel_event.is_set():
-                        break
+    if path == "/api/models/recommendation":
+        payload = json.dumps(recommend_models()).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-                    _set_state(status="acting", current_task=t["goal"],
-                               agent_role=t["role"], step=len(completed) + 1)
-                    _push("task_start", f"[{t['role']}] {t['goal'][:80]}",
-                          task_id=t["id"], role=t["role"])
+    if path == "/api/uploads":
+        payload = json.dumps({"uploads": list_uploads()}).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-                    for tl in task_list:
-                        if tl["id"] == t["id"]:
-                            tl["status"] = "running"
-                    _set_state(tasks=list(task_list))
+    if path == "/api/automations":
+        from scripts.automation_store import list_automations
 
-                    try:
-                        mem    = _UIMemoryProxy()
-                        agent  = get_agent(t["role"])
-                        result = agent.run(t, page=page, context=ctx, memory=mem)
-                    except Exception as exc:
-                        result = {"role": t["role"],
-                                  "findings": f"[error: {exc}]",
-                                  "status": "error"}
-                        _push("error", str(exc), task_id=t["id"])
+        payload = json.dumps({"automations": list_automations(limit=100)}).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-                    completed[t["id"]] = result
-                    for tl in task_list:
-                        if tl["id"] == t["id"]:
-                            tl["status"] = result.get("status", "done")
-                    _set_state(tasks=list(task_list))
+    if path == "/api/memory":
+        try:
+            from scripts.long_term_memory import list_recent_queries
 
-                    snippet = (result.get("findings") or "")[:200]
-                    _push("task_done", snippet, task_id=t["id"],
-                          role=t["role"], status=result.get("status"))
+            memory = list_recent_queries(limit=5)
+        except Exception:
+            memory = []
+        payload = json.dumps({"memory": memory}).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
 
-            ctx.close()   # close persistent context (not browser.close)
-
-        final = ""
-        for role in ("writer", "analyst", "researcher"):
-            for tid, res in completed.items():
-                if res.get("role") == role and res.get("findings"):
-                    final = res["findings"]
-                    break
-            if final:
-                break
-
-        if not final:
-            final = "\n\n".join(
-                f"**{completed[tid]['role']}**: {completed[tid].get('findings','')}"
-                for tid in completed
-            )
-
-        out = ROOT / "outputs" / "result.md"
-        out.parent.mkdir(exist_ok=True)
-        out.write_text(final)
-
-        _set_state(status="done", result=final)
-        _push("done", "Mission complete", result_preview=final[:300])
-
-    except Exception as exc:
-        tb = traceback.format_exc()
-        _set_state(status="error", error=str(exc))
-        _push("error", str(exc), traceback=tb)
+    # Returning None allows websocket handshake paths to continue.
+    return None
 
 
-# ── Flask routes ──────────────────────────────────────────────────────────
+async def _serve(host: str, port: int) -> None:
+    async with serve(
+        _handle_ws,
+        host,
+        port,
+        process_request=_process_request,
+        ping_interval=20,
+        ping_timeout=20,
+        max_size=2_000_000,
+    ):
+        logging.info("UI server running on ws://%s:%s (also serves /index.html)", host, port)
+        await asyncio.Future()
 
-@app.route("/")
-def index():
-    return send_from_directory(str(DASHBOARD), "index.html")
 
-@app.route("/api/ping")
-def ping():
-    return jsonify({"ok": True})
-
-@app.route("/api/goal", methods=["POST"])
-def start_goal():
-    global _mission_thread
-    data = request.get_json(force=True, silent=True) or {}
-    goal = (data.get("goal") or "").strip()
-    if not goal:
-        return jsonify({"error": "goal is required"}), 400
-    _cancel_event.set()
-    if _mission_thread and _mission_thread.is_alive():
-        _mission_thread.join(timeout=3)
-    _cancel_event.clear()
-    _mission_thread = threading.Thread(
-        target=_run_mission_thread, args=(goal,), daemon=True
-    )
-    _mission_thread.start()
-    return jsonify({"ok": True, "goal": goal})
-
-@app.route("/api/inject", methods=["POST"])
-def inject():
-    data = request.get_json(force=True, silent=True) or {}
-    text = (data.get("text") or "").strip()
-    if not text:
-        return jsonify({"error": "text is required"}), 400
-    try:
-        _inject_queue.put_nowait(text)
-    except queue.Full:
-        return jsonify({"error": "injection queue full"}), 429
-    _push("user_inject", f"You said: {text}")
-    return jsonify({"ok": True})
-
-@app.route("/api/events")
-def sse_events():
-    def generate():
-        with _state_lock:
-            snap = dict(_state)
-        yield f"data: {json.dumps({'kind': 'snapshot', 'state': snap})}\n\n"
-        while True:
-            try:
-                evt = _event_queue.get(timeout=20)
-                yield f"data: {json.dumps(evt)}\n\n"
-            except queue.Empty:
-                yield 'data: {"kind": "heartbeat"}\n\n'
-    return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-@app.route("/api/status")
-def status():
-    with _state_lock:
-        return jsonify(dict(_state))
-
-@app.route("/api/permission", methods=["POST"])
-def permission():
-    global _permission_response
-    data = request.get_json(force=True, silent=True) or {}
-    _permission_response = {"approved": bool(data.get("approved", False))}
-    _permission_event.set()
-    return jsonify({"ok": True})
-
-@app.route("/api/cancel", methods=["POST"])
-def cancel():
-    _cancel_event.set()
-    _set_state(status="idle")
-    _push("cancelled", "Mission cancelled")
-    return jsonify({"ok": True})
-
-@app.route("/api/result")
-def result():
-    with _state_lock:
-        return jsonify({"result": _state["result"]})
-
-@app.route("/api/login_creds", methods=["POST"])
-def login_creds():
-    global _login_response
-    data = request.get_json(force=True, silent=True) or {}
-    _login_response = {
-        "mode":     "creds",
-        "username": data.get("username", ""),
-        "password": data.get("password", ""),
-        "email":    data.get("email", ""),
-    }
-    _login_event.set()
-    return jsonify({"ok": True})
-
-@app.route("/api/login_take_over", methods=["POST"])
-def login_take_over():
-    global _login_response
-    data = request.get_json(force=True, silent=True) or {}
-    if data.get("done") and "done_event" in _login_response:
-        _login_response["done_event"].set()
-        return jsonify({"ok": True, "phase": "done"})
-    _login_response = {"mode": "takeover"}
-    _login_event.set()
-    return jsonify({"ok": True, "phase": "takeover"})
-
-@app.route("/api/login_deny", methods=["POST"])
-def login_deny():
-    global _login_response
-    _login_response = {"mode": "deny"}
-    _login_event.set()
-    return jsonify({"ok": True})
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Locus UI WebSocket server")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    args = parser.parse_args()
+    asyncio.run(_serve(args.host, args.port))
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=7878)
-    args = parser.parse_args()
-    app.run(host="127.0.0.1", port=args.port, threaded=True, debug=False)
+    main()

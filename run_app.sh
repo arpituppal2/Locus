@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_app.sh  —  Launch local-computer as a native macOS window.
+# run_app.sh  —  Launch Locus as a native macOS window.
 # This is called by the .app bundle in your Dock.
 # It activates the venv, starts the dashboard server,
 # then opens the UI in a dedicated frameless WebKit window via Python.
@@ -7,20 +7,44 @@ set -e
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$DIR/.venv"
+if ! command -v python3 >/dev/null 2>&1; then
+    bash "$DIR/scripts/bootstrap_python_macos.sh"
+    if [ -x /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -x /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    fi
+    hash -r
+fi
+PYTHON3="$(command -v python3)"
+export LOCAL_COMPUTER_ALLOW_MODELS="${LOCAL_COMPUTER_ALLOW_MODELS:-0}"
+export LOCAL_COMPUTER_ALLOW_EXTERNAL_AI="${LOCAL_COMPUTER_ALLOW_EXTERNAL_AI:-0}"
+export LOCAL_COMPUTER_ALLOW_CLOUD_WORKERS="${LOCAL_COMPUTER_ALLOW_CLOUD_WORKERS:-0}"
+export LOCAL_COMPUTER_SKIP_MODEL_VALIDATE="${LOCAL_COMPUTER_SKIP_MODEL_VALIDATE:-1}"
+export PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}"
+export OLLAMA_NUM_PARALLEL=1
+export OLLAMA_MAX_LOADED_MODELS=1
+export OLLAMA_FLASH_ATTENTION=1
+export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-5m}"
+export LOCAL_COMPUTER_MAX_GPU_PERCENT="${LOCAL_COMPUTER_MAX_GPU_PERCENT:-95}"
+export TOKENIZERS_PARALLELISM=false
 
 # ── 1. Bootstrap venv if needed ────────────────────────────────────────────
-if [ ! -f "$VENV/bin/python" ]; then
-  echo "[local-computer] Creating venv..."
-  python3 -m venv "$VENV"
-  "$VENV/bin/pip" install -q -r "$DIR/requirements.txt"
-  "$VENV/bin/playwright" install chromium
-fi
+"$PYTHON3" "$DIR/scripts/setup_manager.py" --bootstrap
+
+eval "$(
+  "$VENV/bin/python" - <<'PY' 2>/dev/null || true
+from scripts.resource_policy import resource_budget
+for key, value in resource_budget().env.items():
+    print(f'export {key}="{value}"')
+PY
+)"
 
 # ── 2. Kill any stale dashboard server ─────────────────────────────────────
 lsof -ti tcp:8765 | xargs kill -9 2>/dev/null || true
 
 # ── 3. Start dashboard WebSocket server in background ──────────────────────
-"$VENV/bin/python" "$DIR/scripts/localhost_server.py" &
+"$VENV/bin/python" "$DIR/scripts/ui_server.py" --host 127.0.0.1 --port 8765 &
 SERVER_PID=$!
 trap "kill $SERVER_PID 2>/dev/null" EXIT
 
@@ -67,7 +91,7 @@ class AppDelegate(AppKit.NSObject):
             rect, style,
             AppKit.NSBackingStoreBuffered, False
         )
-        win.setTitle_("local-computer")
+        win.setTitle_("Locus")
         win.setMinSize_(AppKit.NSMakeSize(800, 500))
 
         # WKWebView
@@ -87,6 +111,23 @@ class AppDelegate(AppKit.NSObject):
         win.makeKeyAndOrderFront_(None)
         self._win = win
         self._wv  = wv
+        self._monitor = AppKit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            AppKit.NSEventMaskKeyDown,
+            self.handleKeyEvent_
+        )
+
+    def handleKeyEvent_(self, event):
+        # Option+Space focuses Locus while the app is active. A fully global
+        # shortcut requires macOS Accessibility approval and a signed bundle.
+        if event.keyCode() == 49 and (event.modifierFlags() & AppKit.NSEventModifierFlagOption):
+            self._win.makeKeyAndOrderFront_(None)
+            AppKit.NSApp.activateIgnoringOtherApps_(True)
+            self._wv.evaluateJavaScript_completionHandler_(
+                "if (window.openLocusCommandPalette) { window.openLocusCommandPalette(document.querySelector('#queryInput')?.value || ''); } else { document.querySelector('#queryInput')?.focus(); document.querySelector('#queryInput')?.select(); }",
+                None
+            )
+            return None
+        return event
 
     def applicationShouldTerminateAfterLastWindowClosed_(self, app):
         return True

@@ -1,7 +1,7 @@
 """AI chatbot UI subagent — uses Playwright to submit a prompt to a cloud AI
 (Gemini, ChatGPT, Claude, Copilot, or Perplexity) and return the response text.
 
-Designed for tasks that exceed local model capability (14b+ reasoning,
+Designed for tasks that exceed local model capability (advanced reasoning,
 long-form synthesis, complex math). Runs in a non-headless Chromium tab
 so the user can log in / handle CAPTCHAs on first use.
 

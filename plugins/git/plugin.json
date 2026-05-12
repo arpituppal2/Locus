@@ -1,0 +1,14 @@
+{
+  "id": "git",
+  "name": "Git",
+  "version": "0.1.0",
+  "description": "Inspect local repository status, diffs, branches, and history.",
+  "enabled": true,
+  "keywords": ["git", "commit", "diff", "branch", "status", "repo", "pr"],
+  "capabilities": ["git_status", "git_diff", "git_log"],
+  "tools": [
+    {"name": "git_status", "risk": "read", "description": "Show local git status."},
+    {"name": "git_diff", "risk": "read", "description": "Show local file diffs."},
+    {"name": "git_log", "risk": "read", "description": "Show recent commits."}
+  ]
+}

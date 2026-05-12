@@ -1,173 +1,305 @@
-"""Ollama client with streaming, per-role token caps, context-window limits, and GPU pinning.
-
-Mac 16GB optimizations:
-  - Memory threshold lowered — Chromium eats ~1.5GB, leaving ~2-3GB free for Ollama
-  - All roles default to qwen3:4b so no model swapping mid-task
-  - stream=True to avoid full-response buffering
-  - num_ctx capped to 2048 to keep KV-cache small
-"""
+"""Ollama client with sensible defaults for Apple Silicon unified memory."""
 from __future__ import annotations
-import json, logging, psutil
+
+import asyncio
+import json
+import logging
 from pathlib import Path
+from typing import Any, AsyncGenerator, Iterable
+
 import httpx
 
+from scripts.model_selector import effective_models_config
+from scripts.runtime_policy import local_models_allowed, skip_model_validation
+
 ROOT = Path(__file__).resolve().parent.parent
-_CFG_PATH = ROOT / "configs" / "models.json"
+_cfg = effective_models_config()
 
-_cfg = json.loads(_CFG_PATH.read_text()) if _CFG_PATH.exists() else {}
+MODEL_ORCHESTRATOR = _cfg.get("orchestrator", "qwen3:8b")
+MODEL_PLANNER = _cfg.get("planner", "qwen3:8b")
+MODEL_NAVIGATOR = _cfg.get("navigator", "qwen3:4b")
+MODEL_EXECUTOR = _cfg.get("executor", "qwen3:4b")
+MODEL_SYNTHESIZER = _cfg.get("synthesizer", "qwen3:8b")
+MODEL_CRITIC = _cfg.get("critic", "qwen3:4b")
+MODEL_MEMORY = _cfg.get("memory", "nomic-embed-text")
+MODEL_ROUTER = _cfg.get("router", "qwen3:4b")
 
-# On 16GB with Chromium running, use 4b everywhere to avoid swapping
-MODEL_ROUTER  = _cfg.get("router",  "qwen3:4b")
-MODEL_ACTOR   = _cfg.get("actor",   "qwen3:4b")
-MODEL_PLANNER = _cfg.get("planner", "qwen3:4b")
-MODEL_ANALYST = _cfg.get("analyst", "qwen3:4b")
-MODEL_HEAVY   = _cfg.get("heavy",   "qwen3:8b")
+# Backward-compatible aliases used by older modules.
+MODEL_ACTOR = MODEL_NAVIGATOR
+MODEL_ANALYST = MODEL_SYNTHESIZER
+MODEL_HEAVY = MODEL_SYNTHESIZER
 
-CHATBOT_THRESHOLD: int = _cfg.get("chatbot_threshold", 7)
-
-_TIMEOUTS = _cfg.get("timeouts", {
-    "qwen3:4b":  45,
-    "qwen3:8b":  90,
-    "qwen3:14b": 180,
-})
-
-_CTX_SIZES: dict[str, int] = _cfg.get("context_sizes", {
-    "qwen3:4b":  2048,
-    "qwen3:8b":  2048,
-    "qwen3:14b": 4096,
-})
-
-_MAX_TOKENS: dict[str, int] = _cfg.get("max_tokens", {
-    "router":   256,
-    "actor":    1024,
-    "planner":  512,
-    "analyst":  1500,
-    "heavy":    2048,
-})
-
-_MODEL_ROLE: dict[str, str] = {
-    MODEL_ROUTER:  "router",
-    MODEL_ACTOR:   "actor",
-    MODEL_PLANNER: "planner",
-    MODEL_ANALYST: "analyst",
-    MODEL_HEAVY:   "heavy",
-}
+CHATBOT_THRESHOLD = int(_cfg.get("chatbot_threshold", 8))
 
 BASE_URL = _cfg.get("ollama_host", "http://localhost:11434")
-_client = httpx.Client(base_url=BASE_URL, timeout=None)
+_TIMEOUTS = _cfg.get(
+    "timeouts",
+    {
+        "qwen3:4b": 45,
+        "qwen3:8b": 90,
+        "nomic-embed-text": 45,
+    },
+)
 
+DEFAULT_OLLAMA_OPTIONS = {
+    "num_ctx": 4096,
+    "num_thread": 8,
+    "num_gpu": 999,
+}
+DEFAULT_OLLAMA_OPTIONS.update(_cfg.get("ollama_options", {}))
 
-def _memory_ok_for(model: str) -> bool:
-    available = psutil.virtual_memory().available / (1024 ** 3)
-    # Lowered thresholds: Chromium takes ~1.5GB, so we have ~2-3GB free on 16GB
-    required = 6.0 if "14b" in model else 1.8 if "8b" in model else 1.2
-    return available >= required
-
-
-def _fallback(model: str) -> str:
-    if "14b" in model and not _memory_ok_for(model):
-        logging.warning(f"[ollama] Low memory — downgrading {model} → qwen3:8b")
-        return "qwen3:8b"
-    if "8b" in model and not _memory_ok_for(model):
-        logging.warning(f"[ollama] Low memory — downgrading {model} → qwen3:4b")
-        return "qwen3:4b"
-    return model
+_sync_client = httpx.Client(base_url=BASE_URL, timeout=None)
 
 
 def _timeout_for(model: str) -> float:
-    for key, val in _TIMEOUTS.items():
+    for key, timeout in _TIMEOUTS.items():
         if key in model:
-            return float(val)
-    return 60.0
+            return float(timeout)
+    return 90.0
 
 
-def _ctx_for(model: str) -> int:
-    for key, val in _CTX_SIZES.items():
-        if key in model:
-            return val
-    return 2048
+def _merge_options(options: dict[str, Any] | None = None) -> dict[str, Any]:
+    merged = dict(DEFAULT_OLLAMA_OPTIONS)
+    if options:
+        merged.update(options)
+    return merged
 
 
-def _max_tokens_for(model: str) -> int:
-    role = _MODEL_ROLE.get(model)
-    if role:
-        return _MAX_TOKENS.get(role, 1024)
-    if "14b" in model:
-        return _MAX_TOKENS.get("heavy", 2048)
-    if "8b" in model:
-        return _MAX_TOKENS.get("analyst", 1500)
-    return _MAX_TOKENS.get("actor", 1024)
+def _extract_stream_text(payload: dict[str, Any]) -> str:
+    if "response" in payload:
+        return str(payload.get("response", ""))
+    msg = payload.get("message")
+    if isinstance(msg, dict):
+        return str(msg.get("content", ""))
+    return ""
 
 
-def _validate_models() -> None:
-    try:
-        r = httpx.get(f"{BASE_URL}/api/tags", timeout=5)
-        available = {m["name"] for m in r.json().get("models", [])}
-        for role, model in [
-            ("router",  MODEL_ROUTER),
-            ("actor",   MODEL_ACTOR),
-            ("planner", MODEL_PLANNER),
-            ("heavy",   MODEL_HEAVY),
-        ]:
-            if model not in available:
-                logging.warning(f"[ollama] Model '{model}' (role={role}) not found — run: ollama pull {model}")
-    except Exception as e:
-        logging.warning(f"[ollama] Could not validate models: {e}")
-
-
-_validate_models()
-
-
-def call(prompt: str, model: str = MODEL_ACTOR, system: str = "") -> str:
-    model = _fallback(model)
-    timeout = _timeout_for(model)
-    payload: dict = {
-        "model":  model,
+def call(prompt: str, model: str = MODEL_NAVIGATOR, system: str = "", options: dict[str, Any] | None = None) -> str:
+    if not local_models_allowed():
+        logging.warning("[ollama] Local model use is disabled; skipping generate call")
+        return ""
+    payload: dict[str, Any] = {
+        "model": model,
         "prompt": prompt,
         "stream": True,
-        "options": {
-            "num_predict": _max_tokens_for(model),
-            "num_ctx":     _ctx_for(model),
-        },
+        "options": _merge_options(options),
     }
     if system:
         payload["system"] = system
+
+    timeout = _timeout_for(model)
     chunks: list[str] = []
     try:
-        with _client.stream("POST", "/api/generate", json=payload, timeout=timeout) as r:
-            r.raise_for_status()
-            for line in r.iter_lines():
+        with _sync_client.stream("POST", "/api/generate", json=payload, timeout=timeout) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
                 if not line:
                     continue
                 try:
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                chunks.append(data.get("response", ""))
+                chunks.append(_extract_stream_text(data))
                 if data.get("done"):
                     break
-        return "".join(chunks).strip()
-    except httpx.HTTPStatusError as e:
-        logging.error(f"[ollama] HTTP {e.response.status_code} for model={model}")
+    except Exception as exc:
+        logging.error(f"[ollama] generate failed for model={model}: {exc}")
         return ""
-    except httpx.TimeoutException:
-        logging.error(f"[ollama] Timeout after {timeout}s for model={model}")
-        return ""
-    except Exception as e:
-        logging.error(f"[ollama] Unexpected error: {e}")
-        return ""
+    return "".join(chunks).strip()
 
 
-def call_json(prompt: str, model: str = MODEL_PLANNER, system: str = "") -> dict:
-    raw = call(prompt, model=model, system=system)
+def stream_chat(
+    messages: list[dict[str, str]],
+    model: str = MODEL_SYNTHESIZER,
+    options: dict[str, Any] | None = None,
+) -> Iterable[str]:
+    if not local_models_allowed():
+        logging.warning("[ollama] Local model use is disabled; skipping chat stream")
+        return
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "options": _merge_options(options),
+    }
+
+    timeout = _timeout_for(model)
+    try:
+        with _sync_client.stream("POST", "/api/chat", json=payload, timeout=timeout) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                token = _extract_stream_text(data)
+                if token:
+                    yield token
+                if data.get("done"):
+                    break
+    except Exception as exc:
+        logging.error(f"[ollama] chat stream failed for model={model}: {exc}")
+
+
+def chat(
+    messages: list[dict[str, str]],
+    model: str = MODEL_SYNTHESIZER,
+    options: dict[str, Any] | None = None,
+) -> str:
+    return "".join(stream_chat(messages, model=model, options=options)).strip()
+
+
+def call_json(
+    prompt: str,
+    model: str = MODEL_PLANNER,
+    system: str = "",
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    raw = call(prompt, model=model, system=system, options=options)
     if not raw:
         return {}
-    for attempt in [raw, raw[raw.find("{"):raw.rfind("}")+1] if "{" in raw else ""]:
-        if not attempt:
-            continue
+
+    candidates = [raw]
+    first = raw.find("{")
+    last = raw.rfind("}")
+    if first != -1 and last != -1 and last > first:
+        candidates.append(raw[first:last + 1])
+
+    for candidate in candidates:
         try:
-            return json.loads(attempt)
-        except (json.JSONDecodeError, ValueError):
+            data = json.loads(candidate)
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, TypeError):
             continue
-    logging.warning(f"[ollama] Could not parse JSON from model={model}. Raw: {raw[:200]}")
+
+    logging.warning(f"[ollama] Could not parse JSON response from model={model}")
     return {}
+
+
+def embed_text(
+    text: str,
+    model: str = MODEL_MEMORY,
+    options: dict[str, Any] | None = None,
+) -> list[float]:
+    if not local_models_allowed():
+        return []
+    embed_payload = {
+        "model": model,
+        "input": text,
+        "options": _merge_options(options),
+    }
+    timeout = _timeout_for(model)
+    try:
+        resp = _sync_client.post("/api/embed", json=embed_payload, timeout=timeout)
+        resp.raise_for_status()
+        body = resp.json()
+        embeddings = body.get("embeddings")
+        emb = embeddings[0] if isinstance(embeddings, list) and embeddings else body.get("embedding", [])
+        return [float(x) for x in emb]
+    except Exception as exc:
+        logging.warning(f"[ollama] /api/embed failed for model={model}, trying legacy endpoint: {exc}")
+    legacy_payload = {
+        "model": model,
+        "prompt": text,
+        "options": _merge_options(options),
+    }
+    try:
+        resp = _sync_client.post("/api/embeddings", json=legacy_payload, timeout=timeout)
+        resp.raise_for_status()
+        emb = resp.json().get("embedding", [])
+        return [float(x) for x in emb]
+    except Exception as exc:
+        logging.error(f"[ollama] embedding failed for model={model}: {exc}")
+        return []
+
+
+async def async_call(
+    prompt: str,
+    model: str = MODEL_NAVIGATOR,
+    system: str = "",
+    options: dict[str, Any] | None = None,
+) -> str:
+    return await asyncio.to_thread(call, prompt, model, system, options)
+
+
+async def async_call_json(
+    prompt: str,
+    model: str = MODEL_PLANNER,
+    system: str = "",
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(call_json, prompt, model, system, options)
+
+
+async def async_embed_text(
+    text: str,
+    model: str = MODEL_MEMORY,
+    options: dict[str, Any] | None = None,
+) -> list[float]:
+    return await asyncio.to_thread(embed_text, text, model, options)
+
+
+async def async_stream_chat(
+    messages: list[dict[str, str]],
+    model: str = MODEL_SYNTHESIZER,
+    options: dict[str, Any] | None = None,
+) -> AsyncGenerator[str, None]:
+    if not local_models_allowed():
+        logging.warning("[ollama] Local model use is disabled; skipping async chat stream")
+        return
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "options": _merge_options(options),
+    }
+    timeout = _timeout_for(model)
+
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=None) as client:
+        try:
+            async with client.stream("POST", "/api/chat", json=payload, timeout=timeout) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    token = _extract_stream_text(data)
+                    if token:
+                        yield token
+                    if data.get("done"):
+                        break
+        except Exception as exc:
+            logging.error(f"[ollama] async chat stream failed for model={model}: {exc}")
+
+
+def _validate_models() -> None:
+    if skip_model_validation():
+        logging.info("[ollama] Model validation skipped by runtime policy")
+        return
+    try:
+        resp = httpx.get(f"{BASE_URL}/api/tags", timeout=5)
+        resp.raise_for_status()
+        available = {m.get("name") for m in resp.json().get("models", [])}
+        for model in {
+            MODEL_ORCHESTRATOR,
+            MODEL_PLANNER,
+            MODEL_NAVIGATOR,
+            MODEL_EXECUTOR,
+            MODEL_SYNTHESIZER,
+            MODEL_CRITIC,
+            MODEL_MEMORY,
+            MODEL_ROUTER,
+        }:
+            if model not in available:
+                logging.warning(f"[ollama] Model '{model}' not found — run: ollama pull {model}")
+    except Exception as exc:
+        logging.warning(f"[ollama] Could not validate local models: {exc}")
+
+
+_validate_models()

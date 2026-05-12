@@ -1,0 +1,14 @@
+{
+  "id": "uploads",
+  "name": "Uploads",
+  "version": "0.1.0",
+  "description": "Accept uploaded files and expose them as local workspace context.",
+  "enabled": true,
+  "keywords": ["upload", "attachment", "pdf", "csv", "image", "document"],
+  "capabilities": ["save_upload", "list_uploads", "read_upload"],
+  "tools": [
+    {"name": "save_upload", "risk": "write", "description": "Save a user-provided file under uploads/."},
+    {"name": "list_uploads", "risk": "read", "description": "List uploaded files."},
+    {"name": "read_upload", "risk": "read", "description": "Read supported uploaded text files."}
+  ]
+}

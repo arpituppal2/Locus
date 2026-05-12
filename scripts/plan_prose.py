@@ -5,8 +5,10 @@ from pathlib import Path
 
 import requests
 
+from scripts.ollama_client import DEFAULT_OLLAMA_OPTIONS, MODEL_PLANNER
+
 OLLAMA_URL     = "http://localhost:11434/api/generate"
-PLANNER_MODEL  = "qwen3:4b"
+PLANNER_MODEL  = MODEL_PLANNER
 ROOT           = Path(__file__).resolve().parent.parent
 PROMPT_PATH    = ROOT / "prompts" / "browser_steps_prose.txt"
 
@@ -14,8 +16,8 @@ PROMPT_PATH    = ROOT / "prompts" / "browser_steps_prose.txt"
 def call_planner(task: str) -> dict:
     system = PROMPT_PATH.read_text()
     prompt = system + "\n\nUser instruction:\n" + task + "\n\nJSON only:"
-    payload = {"model": PLANNER_MODEL, "prompt": prompt, "stream": False,
-               "options": {"temperature": 0.1}}
+    options = {**DEFAULT_OLLAMA_OPTIONS, "temperature": 0.1}
+    payload = {"model": PLANNER_MODEL, "prompt": prompt, "stream": False, "options": options}
     resp = requests.post(OLLAMA_URL, json=payload, timeout=300)
     resp.raise_for_status()
     text  = resp.json().get("response", "").strip()

@@ -1,0 +1,17 @@
+{
+  "id": "browser",
+  "name": "Browser",
+  "version": "0.1.0",
+  "description": "Use Playwright to inspect websites and operate web apps.",
+  "enabled": true,
+  "keywords": ["browser", "web", "site", "page", "click", "research", "search"],
+  "capabilities": ["connector_status", "open_page", "click", "fill", "extract_text", "screenshot"],
+  "tools": [
+    {"name": "connector_status", "risk": "read", "description": "Report local browser automation capability readiness."},
+    {"name": "open_page", "risk": "network", "description": "Open a web page."},
+    {"name": "click", "risk": "network", "description": "Click a visible element."},
+    {"name": "fill", "risk": "external_write", "description": "Fill a form field."},
+    {"name": "extract_text", "risk": "read", "description": "Extract visible page text."},
+    {"name": "screenshot", "risk": "read", "description": "Capture page screenshot."}
+  ]
+}

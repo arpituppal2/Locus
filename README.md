@@ -1,11 +1,15 @@
-# local-computer
+# Locus
 
-A local Perplexity Computer / Claude Cowork clone powered by Ollama + Playwright.  
-Runs entirely on your Mac. **No cloud APIs. No paid subscriptions.**
+Locus is a local Perplexity Computer / Codex-style workspace assistant for
+macOS and Windows, powered by plugins, Playwright, and optional Ollama models.
 
-When a task is too complex for a local model, the system automatically opens a
-Playwright browser tab and uses a cloud AI chatbot (Gemini, ChatGPT, Claude,
-Copilot, or Perplexity) as a subagent — just like a human would.
+Local model use is **opt-in**. By default the dashboard starts in model-free
+workspace mode so it can show plugins, uploads, connector status, and hardware
+model recommendations without loading anything into RAM/VRAM.
+
+External AI and cloud worker routing are also **off by default**. The default
+runtime is local-only: local files, local plugins, local browser automation, and
+local Ollama only when you explicitly enable models.
 
 ---
 
@@ -13,73 +17,263 @@ Copilot, or Perplexity) as a subagent — just like a human would.
 
 ```
 run.sh "goal"
-  └─ scripts/orchestrator.py          ← plans mission; routes stages to local or chatbot
-       ├─ scripts/router.py            ← complexity scoring + chatbot/workflow/browse routing
-       ├─ scripts/subagents.py         ← parallel dispatch: local Ollama | chatbot UI | cloud worker
-       │    └─ scripts/ai_chatbot_subagent.py  ← Playwright UI agent for Gemini/GPT/Claude/etc
-       └─ scripts/navigation_agent.py  ← observe/decide/execute research loop
-            ├─ scripts/observer.py     ← DOM → structured state
-            ├─ scripts/executor.py     ← browser actions
-            ├─ scripts/agent_memory.py ← loop memory & stuck detection
-            ├─ scripts/claim_extractor.py
-            ├─ scripts/source_scoring.py
-            ├─ scripts/claim_cluster.py
-            └─ scripts/event_logger.py → outputs/agent_events.jsonl
+  ├─ model-free default
+  │    └─ scripts/workspace_agent.py     ← deterministic local workspace agent
+  │         ├─ scripts/workspace_planner.py  ← natural task → plugin tools
+  │         └─ scripts/plugin_runtime.py     ← filesystem/shell/git/upload/connectors
+  └─ --allow-models
+       └─ scripts/orchestrator.py          ← local research and synthesis loop
+            ├─ scripts/router.py            ← local-first workflow/search/browse routing
+            ├─ scripts/subagents.py         ← local Ollama dispatch; external routes require opt-in
+            └─ scripts/navigation_agent.py  ← observe/decide/execute research loop
+                 ├─ scripts/observer.py     ← DOM → structured state
+                 ├─ scripts/executor.py     ← browser actions
+                 ├─ scripts/agent_memory.py ← loop memory & stuck detection
+                 ├─ scripts/claim_extractor.py
+                 ├─ scripts/source_scoring.py
+                 ├─ scripts/claim_cluster.py
+                 └─ scripts/event_logger.py → outputs/agent_events.jsonl
 
 run_dashboard.sh
-  └─ scripts/localhost_server.py   ← dashboard at http://localhost:8765
+  └─ scripts/ui_server.py          ← dashboard + websocket at http://localhost:8765
        └─ dashboard/index.html     ← live agent view
 ```
 
 ---
 
+## First-Time Setup
+
+`./run.sh`, `./run_dashboard.sh`, `run_app.sh`, and `run.ps1` on Windows now
+bootstrap automatically:
+
+- detect macOS or Windows and choose OS-specific safety defaults
+- install Python automatically when it is missing
+- create `.venv`
+- install `requirements.txt`
+- install Playwright Chromium
+- install Ollama when recommended model downloads are enabled
+- download the recommended local model files
+- start the dashboard
+
+When the dashboard opens for the first time, it runs the remaining setup as a
+system-style setup wizard and streams each step: folder creation, plugin
+registry checks, hardware model recommendation, model downloads, workspace
+indexing, safety limits, Full Disk Access status, and Accessibility status for
+global shortcuts. Downloading models pulls model files only; Locus still does
+not run inference until local model mode is explicitly enabled.
+
+Automatic Python setup uses Homebrew on macOS and `winget` on Windows. Automatic
+Ollama setup uses `brew install --cask ollama` on macOS and `winget install
+Ollama.Ollama` on Windows. To disable automatic model/Ollama downloads for a
+test run:
+
+```bash
+LOCAL_COMPUTER_AUTO_INSTALL_MODELS=0 LOCAL_COMPUTER_AUTO_INSTALL_OLLAMA=0 ./run.sh
+```
+
+```powershell
+$env:LOCAL_COMPUTER_AUTO_INSTALL_MODELS="0"; $env:LOCAL_COMPUTER_AUTO_INSTALL_OLLAMA="0"; .\run.ps1
+```
+
+The app is written for non-technical users: setup starts automatically, shows
+plain-language progress, and avoids command-line-only instructions during normal
+use.
+
+Resource warning: it is highly recommended not to use other apps while Locus is
+running. Local GPU usage is capped at 95% through the legacy
+`LOCAL_COMPUTER_MAX_GPU_PERCENT=95` setting; on macOS, Locus also sets
+`PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.95`. RAM/model caps are applied separately
+from the detected OS profile.
+
+You can rerun the setup checks from the terminal:
+
+```bash
+python scripts/setup_manager.py --status
+python scripts/setup_manager.py --app-setup
+python scripts/setup_manager.py --open-full-disk-access
+python scripts/setup_manager.py --open-accessibility
+```
+
+macOS requires the user to grant Full Disk Access and Accessibility in System
+Settings; Locus can open the right settings screens and verify access afterward,
+but macOS does not allow an app to grant these permissions to itself. Windows
+does not use those macOS permission screens; keep Locus in folders you own and
+approve Windows security prompts if protected-folder access is needed.
+
+Press `Cmd+K` in the dashboard or `Option+Space` in the Mac app to open the
+Locus Command Center. It can run setup, re-check permissions, open the Plugin
+Center, index the current folder, inspect git status, show TODOs, and start
+local workspace tasks without loading a model.
+
+The Safety Center shows local-only state, model/cloud routing status, RAM and
+GPU caps, enabled plugin risk categories, connector readiness, and runtime
+warnings in one place.
+
+The Plugin Center shows every local plugin, connector readiness, declared tools,
+implemented tools, and risk labels. Plugin enable/disable state is persisted in
+`configs/plugins.json`.
+
+---
+
+## Runtime Modes
+
+| Mode | How to start | What runs |
+|------|--------------|-----------|
+| Model-free workspace mode | `./run.sh` or `./run.sh "show plugin status"` | No local model calls. Uses deterministic workspace, plugin, upload, connector, and model recommendation tools. |
+| Local model mode | `./run.sh --allow-models "goal"` or `LOCAL_COMPUTER_ALLOW_MODELS=1 ./run.sh` | Uses Ollama-backed planning, synthesis, memory embeddings, and browser research. |
+| External AI mode | `./run.sh --allow-external-ai --allow-models "goal"` | Allows browser chatbot routing. Off by default for local-only operation. |
+| Cloud worker mode | `./run.sh --allow-cloud-workers --allow-models "goal"` | Allows remote worker dispatch. Off by default. |
+
 ## Model Routing
 
-| Role     | Model          | Trigger                                      |
-|----------|----------------|----------------------------------------------|
-| router   | qwen3:4b       | Quick task classification                    |
-| actor    | qwen3:4b       | Per-step browser action decisions            |
-| planner  | qwen3:8b       | Mission planning & claim extraction          |
-| analyst  | qwen3:8b       | Evidence synthesis & summarization           |
-| heavy    | qwen3:14b      | Hard math / deep reasoning (RAM permitting)  |
-| **chatbot** | **Gemini / ChatGPT / Claude / Copilot / Perplexity** | **Complexity ≥ 7/10 or explicit request** |
+Run `python scripts/model_selector.py` to recommend models for the current OS,
+CPU, GPU, VRAM, and RAM. The selector itself prints download commands only; the
+first-run setup wizard can use that recommendation to pull the model files
+automatically.
 
-Edit `configs/models.json` to change models or the `chatbot_threshold`.
+The selector is conservative on Apple Silicon unified memory and slightly more
+reserved on Windows so the OS, browser automation, and app plugins keep room to
+breathe:
 
-### Chatbot routing logic
+| Installed RAM | Default local behavior |
+|---------------|------------------------|
+| 8 GB | tiny models, 2048 context, one loaded model, plugin-first routing |
+| 12-16 GB | 1.7B/4B control models, one local job, bounded browser tabs |
+| 24 GB+ | larger synthesis/heavy roles only when the RAM budget allows it |
 
-When `complexity_score(goal) >= chatbot_threshold` (default 7), the system opens a
-Playwright-controlled Chromium browser, navigates to the best-matched AI chatbot,
-types the prompt, waits for the response, and returns the text — exactly as a
-human would. This gives you GPT-4o / Gemini 2.5 / Claude Opus reasoning for free,
-using your existing browser sessions.
+Recommendations also check current available RAM and Windows NVIDIA VRAM. If the
+machine is already under memory pressure, or if an RTX laptop has limited VRAM,
+Locus lowers its effective model budget and downgrades roles before it downloads
+anything.
 
-Automatic backend selection:
-- **Code / refactor / git** → Claude  
-- **Math / proof / statistics** → ChatGPT  
-- **Latest news / current events / search** → Perplexity  
-- **Microsoft tools (Office, Teams, Excel)** → Copilot  
-- **Everything else** → Gemini  
+Set a user RAM cap from the CLI, PowerShell, environment, or dashboard Model
+Selector panel:
+
+```bash
+./run.sh --max-ram-gb 4.5 "show model recommendation"
+LOCAL_COMPUTER_MAX_RAM_GB=6 python scripts/model_selector.py
+python scripts/model_selector.py --simulate-ram-gb 16 --simulate-available-ram-gb 3
+```
+
+```powershell
+.\run.ps1 -MaxRamGb 4.5 "show model recommendation"
+```
+
+Set a GPU cap, if needed:
+
+```bash
+LOCAL_COMPUTER_MAX_GPU_PERCENT=90 ./run.sh
+```
+
+Caps below 6 GB work, but are intentionally warned as slower and more fallback
+heavy. Caps below 4 GB are expected to produce more errors.
+
+Edit `configs/models.json` only when you want manual assignments, or write a
+generated recommendation to `configs/models.recommended.json` with:
+
+```bash
+python scripts/model_selector.py --write-config
+```
+
+## Plugins
+
+Plugins are manifest-driven contracts under `plugins/*/plugin.json`. The
+registry is loaded by `scripts/plugin_manager.py` and surfaced in the dashboard.
+Current built-ins:
+
+- `filesystem` for local files and workspace context
+- `shell` for local command execution
+- `git` for repository inspection
+- `github` for `gh`/token-backed GitHub workflows
+- `email` for IMAP/SMTP or browser-backed email workflows
+- `browser` for Playwright web automation
+- `uploads` for dashboard file uploads
+- `memory` for local query history
+- `workspace` for repo indexing, project briefing, health reports, TODO reports, and run history
+- `automations` for local scheduled Locus task definitions and due-task execution
+
+Inspect the registry without running a model:
+
+```bash
+python scripts/plugin_manager.py --json
+```
+
+Run an implemented plugin tool directly:
+
+```bash
+python scripts/plugin_runtime.py filesystem.search_text '{"query":"plugin_runtime"}'
+python scripts/plugin_runtime.py shell.run_command '{"command":"pwd"}'
+python scripts/plugin_runtime.py workspace.workspace_brief '{}'
+python scripts/plugin_runtime.py workspace.health_report '{}'
+python scripts/plugin_runtime.py workspace.plugin_diagnostics '{}'
+python scripts/plugin_runtime.py automations.list_automations '{}'
+```
+
+In the dashboard or one-shot workspace mode, precise tool calls use:
+
+```text
+@tool filesystem.read_file {"path":"README.md","max_chars":1200}
+@tool git.git_status {}
+@tool workspace.workspace_brief {}
+@tool email.draft_email {"to":"person@example.com","subject":"Draft","body":"Nothing is sent automatically."}
+@tool browser.open_page {"url":"http://127.0.0.1:8765"}
+@tool automations.create_automation {"name":"Daily repo check","prompt":"workspace health","schedule":"every 1 day"}
+```
+
+Run the local acceptance suite without starting models:
+
+```bash
+LOCAL_COMPUTER_ALLOW_MODELS=0 LOCAL_COMPUTER_SKIP_MODEL_VALIDATE=1 python scripts/locus_acceptance.py
+```
+
+Natural model-free requests also route to tools:
+
+```bash
+./run.sh "search for plugin_runtime"
+./run.sh "run command pwd"
+./run.sh "write file notes/todo.txt with Review plugin runtime"
+./run.sh "git status"
+./run.sh "what is this repo"
+./run.sh "show todos"
+./run.sh "run history"
+```
+
+### External AI Policy
+
+This project is local-only by default. High-complexity tasks are staged into
+smaller local model calls and plugin steps instead of silently opening ChatGPT,
+Claude, Gemini, Copilot, or Perplexity.
+
+Optional browser chatbot automation still exists for users who explicitly opt in:
+
+```bash
+LOCAL_COMPUTER_ALLOW_EXTERNAL_AI=1 ./run.sh --allow-models "task"
+```
+
+Remote worker dispatch is also disabled unless `LOCAL_COMPUTER_ALLOW_CLOUD_WORKERS=1`
+or `./run.sh --allow-cloud-workers` is used.
 
 ---
 
 ## Setup (first time)
 
 ```bash
-git clone https://github.com/arpituppal2/local-computer.git
-cd local-computer
+git clone https://github.com/arpituppal2/Locus.git
+cd Locus
 chmod +x run.sh run_dashboard.sh open_dashboard.sh
-./run.sh "Find the latest UCLA math department news and summarize it"
+./run.sh "show model recommendation"
 ```
 
-`run.sh` creates the venv, installs deps, and installs Playwright Chromium automatically.
+`run.sh` creates the venv, installs deps, and installs Playwright Chromium
+automatically. Without `--allow-models`, one-shot tasks use model-free workspace
+mode.
 
 ### Pull the local models
 
 ```bash
-ollama pull qwen3:4b    # router + actor (~2.6 GB)
-ollama pull qwen3:8b    # planner + analyst (~5 GB)
-# qwen3:14b is optional — tasks that need it auto-route to chatbot UI
+python scripts/model_selector.py
+# Then pull only the models printed in the download plan.
+# Nothing is downloaded unless you run ollama pull or pass --pull.
 ```
 
 ---
@@ -87,18 +281,16 @@ ollama pull qwen3:8b    # planner + analyst (~5 GB)
 ## Usage
 
 ```bash
-# Standard research mission (auto-routes heavy stages to chatbot)
-./run.sh "Research the best open-source LLMs in 2026 and write a markdown summary"
+# Standard local research mission
+./run.sh --allow-models "Research the best open-source LLMs in 2026 and write a markdown summary"
 
-# Force all stages to run as parallel subagents
-./run.sh --parallel "Compare GPT-5 and Gemini 2.5 Pro"
+# M1/M2 Air 8 GB style budget
+./run.sh --max-ram-gb 4.5 "show model recommendation"
 
-# Direct chatbot subagent (bypass planning entirely)
-./run.sh --chatbot gemini    "Prove the Cauchy-Schwarz inequality"
-./run.sh --chatbot claude    "Refactor this Python file: ..."
-./run.sh --chatbot chatgpt   "Solve: find all integer solutions to x^3 + y^3 = z^3"
-./run.sh --chatbot perplexity "Latest news about Anthropic model releases"
-./run.sh --chatbot copilot   "Generate an Excel formula for compound interest"
+# Model-free workspace / plugin checks
+./run.sh "show plugin status"
+./run.sh "show model recommendation"
+./run.sh "list files"
 
 # Watch the agent live (second terminal)
 ./run_dashboard.sh && ./open_dashboard.sh
@@ -106,22 +298,11 @@ ollama pull qwen3:8b    # planner + analyst (~5 GB)
 
 ---
 
-## Chatbot Login
-
-The chatbot subagent opens a **visible** (non-headless) browser so you can log in
-on first use. Once logged in, Playwright reuses the session for the duration of the
-run. Sessions are NOT persisted between runs — you may need to log in again.
-
-To avoid re-logging-in: run the mission once manually with `--chatbot <backend>`,
-complete the login, then run your actual task immediately after in the same session.
-
----
-
 ## Requirements
 
-- macOS 14 Sonoma+ (tested on M4 MacBook Pro 16 GB)
+- macOS on Apple Silicon; 8 GB RAM is supported with the safe tier
 - Python 3.11+
-- [Ollama](https://ollama.com) running locally
+- [Ollama](https://ollama.com) only when `--allow-models` is used
 - Playwright Chromium (auto-installed by `run.sh`)
 
 ---
@@ -129,15 +310,28 @@ complete the login, then run your actual task immediately after in the same sess
 ## File Layout
 
 ```
-local-computer/
+Locus/
 ├── configs/
-│   ├── models.json          ← model assignments + chatbot_threshold
+│   ├── models.json          ← manual model assignments
+│   ├── model_catalog.json   ← hardware-aware recommendation catalog
+│   ├── plugins.json         ← plugin registry settings
 │   └── runtime.json         ← ports, timeouts, browser choice
+├── plugins/                 ← plugin manifests and connector contracts
 ├── scripts/
-│   ├── ai_chatbot_subagent.py  ← ★ NEW: Playwright UI agent for cloud chatbots
-│   ├── subagents.py            ← parallel dispatch: local | chatbot | cloud
-│   ├── router.py               ← complexity scoring + route selection
-│   ├── orchestrator.py         ← mission planner + chatbot-aware dispatch
+│   ├── hardware_profile.py     ← CPU/GPU/RAM detection
+│   ├── setup_manager.py        ← first-run setup checks and installers
+│   ├── model_selector.py       ← safe model recommendation and pull plan
+│   ├── plugin_manager.py       ← plugin registry + connector status
+│   ├── plugin_runtime.py       ← executable built-in plugin tools
+│   ├── workspace_index.py      ← durable repo index + project briefing
+│   ├── run_history.py          ← persistent per-workspace run history
+│   ├── workspace_planner.py    ← deterministic model-free tool planner
+│   ├── workspace_agent.py      ← model-free workspace fallback
+│   ├── upload_store.py         ← dashboard file upload storage
+│   ├── ai_chatbot_subagent.py  ← optional external AI automation, off by default
+│   ├── subagents.py            ← local dispatch plus explicit opt-in external routes
+│   ├── router.py               ← local-first route selection
+│   ├── orchestrator.py         ← local research and synthesis loop
 │   ├── navigation_agent.py     ← main research loop
 │   ├── ollama_client.py        ← Ollama wrapper (bug fix: call_json arg order)
 │   ├── observer.py             ← DOM → structured state
@@ -158,8 +352,8 @@ local-computer/
 
 ## Extending
 
-- **New chatbot backend**: add entry to `BACKENDS` in `scripts/ai_chatbot_subagent.py`  
-- **Change complexity threshold**: edit `chatbot_threshold` in `configs/models.json`  
-- **New tool**: add `scripts/tools/my_tool.py`, import in `navigation_agent.py`  
-- **Swap a local model**: edit `configs/models.json`  
-- **New browser action**: add a branch to `executor.py`  
+- **Change RAM budget**: use dashboard Model Selector, `--max-ram-gb`, or `LOCAL_COMPUTER_MAX_RAM_GB`
+- **New optional chatbot backend**: add entry to `BACKENDS` in `scripts/ai_chatbot_subagent.py`
+- **New tool**: add `scripts/tools/my_tool.py`, import in `navigation_agent.py`
+- **Swap a local model**: update `configs/model_catalog.json` or disable auto-selection and edit `configs/models.json`
+- **New browser action**: add a branch to `executor.py`

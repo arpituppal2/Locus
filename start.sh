@@ -1,93 +1,61 @@
 #!/usr/bin/env bash
-# ──────────────────────────────────────────────────────────────────────────────
-# local-computer · single-command launcher
-# Usage: ./start.sh
-# ──────────────────────────────────────────────────────────────────────────────
+# Locus single-command launcher.
+# Starts the dashboard in model-free mode unless LOCAL_COMPUTER_ALLOW_MODELS=1.
 set -euo pipefail
 
 AIDIR="$(cd "$(dirname "$0")" && pwd)"
-PORT=7878
-
-# ── Memory / GPU env (M4, 16GB) ───────────────────────────────────────────────
-export OLLAMA_MAX_VRAM=14336
-export OLLAMA_FLASH_ATTENTION=1
-export OLLAMA_MAX_LOADED_MODELS=1
-export OLLAMA_NUM_PARALLEL=2
-
-# ── venv ──────────────────────────────────────────────────────────────────────
+PORT="${LOCAL_COMPUTER_PORT:-8765}"
 VENV="$AIDIR/.venv"
-[ -d "$VENV" ] || python3 -m venv "$VENV"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  bash "$AIDIR/scripts/bootstrap_python_macos.sh"
+  if [ -x /opt/homebrew/bin/brew ]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [ -x /usr/local/bin/brew ]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+  hash -r
+fi
+PYTHON3="$(command -v python3)"
+
+export LOCAL_COMPUTER_ALLOW_MODELS="${LOCAL_COMPUTER_ALLOW_MODELS:-0}"
+export LOCAL_COMPUTER_ALLOW_EXTERNAL_AI="${LOCAL_COMPUTER_ALLOW_EXTERNAL_AI:-0}"
+export LOCAL_COMPUTER_ALLOW_CLOUD_WORKERS="${LOCAL_COMPUTER_ALLOW_CLOUD_WORKERS:-0}"
+export LOCAL_COMPUTER_SKIP_MODEL_VALIDATE="${LOCAL_COMPUTER_SKIP_MODEL_VALIDATE:-1}"
+export PYTHONPATH="$AIDIR${PYTHONPATH:+:$PYTHONPATH}"
+export OLLAMA_NUM_PARALLEL=1
+export OLLAMA_MAX_LOADED_MODELS=1
+export OLLAMA_FLASH_ATTENTION=1
+export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-5m}"
+export LOCAL_COMPUTER_MAX_GPU_PERCENT="${LOCAL_COMPUTER_MAX_GPU_PERCENT:-95}"
+export TOKENIZERS_PARALLELISM=false
+
+"$PYTHON3" "$AIDIR/scripts/setup_manager.py" --bootstrap
 source "$VENV/bin/activate"
 
-# ── deps ──────────────────────────────────────────────────────────────────────
-SENTINEL="$VENV/.deps_ok"
-REQS="$AIDIR/requirements.txt"
-if [ ! -f "$SENTINEL" ] || [ "$REQS" -nt "$SENTINEL" ]; then
-  echo "[setup] Installing dependencies…"
-  pip install --quiet --upgrade pip
-  pip install --quiet -r "$REQS"
-  touch "$SENTINEL"
+eval "$(
+  python - <<'PY' 2>/dev/null || true
+from scripts.resource_policy import resource_budget
+for key, value in resource_budget().env.items():
+    print(f'export {key}="{value}"')
+PY
+)"
+
+if lsof -ti tcp:"$PORT" >/dev/null 2>&1; then
+  echo "[start] Port $PORT is already in use. Stop that process or set LOCAL_COMPUTER_PORT."
+  exit 1
 fi
 
-# ── flask / sse extra deps ─────────────────────────────────────────────────────
-pip install --quiet flask flask-cors 2>/dev/null || true
-
-# ── Playwright Chromium ────────────────────────────────────────────────────────
-if ! python -c "
-from playwright.sync_api import sync_playwright
-with sync_playwright() as p:
-    b = p.chromium.launch(headless=True); b.close()
-" 2>/dev/null; then
-  echo "[setup] Installing Playwright Chromium (one-time ~150MB)…"
-  playwright install chromium --with-deps 2>&1 | tail -5 || true
-fi
-
-# ── Ollama ─────────────────────────────────────────────────────────────────────
-if ! ollama list >/dev/null 2>&1; then
-  echo "[setup] Starting Ollama…"
-  osascript \
-    -e 'tell application "Terminal"' \
-    -e '  if not (exists window 1) then reopen' \
-    -e '  activate' \
-    -e '  tell application "System Events" to keystroke "t" using command down' \
-    -e '  delay 0.4' \
-    -e "  do script \"ollama serve\" in front window" \
-    -e 'end tell' 2>/dev/null || \
-  ollama serve >/tmp/ollama.log 2>&1 &
-  echo -n "[setup] Waiting for Ollama"
-  for i in $(seq 1 30); do
-    ollama list >/dev/null 2>&1 && break || true
-    sleep 0.5; echo -n "."
-  done
-  echo " ready."
-fi
-
-for MODEL in qwen3:8b; do
-  ollama list 2>/dev/null | grep -q "$MODEL" || {
-    echo "[setup] Pulling $MODEL…"
-    ollama pull "$MODEL" || echo "[warn] pull failed — continuing."
-  }
-done
-
-# ── prep dirs ─────────────────────────────────────────────────────────────────
-mkdir -p "$AIDIR/outputs" "$AIDIR/logs"
-rm -f "$AIDIR/outputs/agent_events.jsonl"
-
-# ── launch UI server ──────────────────────────────────────────────────────────
-echo "[start] Launching local-computer at http://localhost:$PORT"
-python "$AIDIR/scripts/ui_server.py" --port "$PORT" &
+echo "[start] Starting Locus at http://127.0.0.1:$PORT"
+python "$AIDIR/scripts/ui_server.py" --host 127.0.0.1 --port "$PORT" &
 SERVER_PID=$!
 
-# ── wait for server then open browser ─────────────────────────────────────────
-echo -n "[start] Waiting for UI server"
-for i in $(seq 1 20); do
-  curl -sf "http://localhost:$PORT/api/ping" >/dev/null 2>&1 && break || true
-  sleep 0.3; echo -n "."
+for _ in $(seq 1 30); do
+  curl -sf "http://127.0.0.1:$PORT/api/ping" >/dev/null 2>&1 && break || true
+  sleep 0.3
 done
-echo " ready."
 
-open "http://localhost:$PORT" 2>/dev/null || xdg-open "http://localhost:$PORT" 2>/dev/null || true
-
-echo "[start] local-computer is running. Press Ctrl+C to stop."
+open "http://127.0.0.1:$PORT" 2>/dev/null || true
+echo "[start] Locus is running in model-free mode. Press Ctrl+C to stop."
 trap "kill $SERVER_PID 2>/dev/null; exit" INT TERM
-wait $SERVER_PID
+wait "$SERVER_PID"

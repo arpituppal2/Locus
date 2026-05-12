@@ -1,0 +1,213 @@
+{
+  "catalog_version": 2,
+  "notes": [
+    "Local macOS/Windows catalog; Windows NVIDIA recommendations are additionally constrained by detected VRAM.",
+    "Selector writes recommendations only; use --pull explicitly to download.",
+    "8 GB machines default to tiny models, low context, one loaded model, and plugin-first routing."
+  ],
+  "models": {
+    "qwen3:0.6b": {
+      "family": "qwen3",
+      "approx_size_gb": 0.52,
+      "runtime_ram_gb": 1.2,
+      "runtime_vram_gb": 0.8,
+      "min_ram_gb": 4,
+      "roles": ["router", "executor", "orchestrator"],
+      "notes": "Smallest first-party Qwen3 Ollama tag; suitable for 8 GB Macs with low context."
+    },
+    "qwen3:1.7b": {
+      "family": "qwen3",
+      "approx_size_gb": 1.4,
+      "runtime_ram_gb": 2.4,
+      "runtime_vram_gb": 1.7,
+      "min_ram_gb": 6,
+      "roles": ["router", "navigator", "executor", "critic", "planner", "synthesizer", "orchestrator"],
+      "notes": "Default 8 GB local text model when max RAM budget allows it."
+    },
+    "qwen3:4b": {
+      "family": "qwen3",
+      "approx_size_gb": 2.5,
+      "runtime_ram_gb": 4.6,
+      "runtime_vram_gb": 3.2,
+      "min_ram_gb": 12,
+      "roles": ["router", "navigator", "executor", "critic", "planner", "synthesizer", "orchestrator"],
+      "notes": "Fast local control/planning model for 12-16 GB+ Macs."
+    },
+    "qwen3:8b": {
+      "family": "qwen3",
+      "approx_size_gb": 5.2,
+      "runtime_ram_gb": 8.2,
+      "runtime_vram_gb": 5.8,
+      "min_ram_gb": 16,
+      "roles": ["planner", "synthesizer", "orchestrator", "critic", "heavy"],
+      "notes": "Default 16 GB planner/synthesizer only when RAM budget allows."
+    },
+    "qwen3:14b": {
+      "family": "qwen3",
+      "approx_size_gb": 9.3,
+      "runtime_ram_gb": 13.5,
+      "runtime_vram_gb": 10.0,
+      "min_ram_gb": 24,
+      "roles": ["planner", "synthesizer", "orchestrator", "critic", "heavy"],
+      "notes": "Optional heavy reasoning model for 24 GB+ Macs."
+    },
+    "qwen3:32b": {
+      "family": "qwen3",
+      "approx_size_gb": 20.0,
+      "runtime_ram_gb": 28.0,
+      "runtime_vram_gb": 22.0,
+      "min_ram_gb": 48,
+      "roles": ["planner", "synthesizer", "orchestrator", "heavy"],
+      "notes": "Large local reasoning model for high-memory workstations."
+    },
+    "qwen3-embedding:0.6b": {
+      "family": "embedding",
+      "approx_size_gb": 0.64,
+      "runtime_ram_gb": 1.2,
+      "runtime_vram_gb": 0.9,
+      "min_ram_gb": 6,
+      "roles": ["memory"],
+      "notes": "Low-memory embedding option."
+    },
+    "nomic-embed-text": {
+      "family": "embedding",
+      "approx_size_gb": 0.3,
+      "runtime_ram_gb": 0.8,
+      "runtime_vram_gb": 0.6,
+      "min_ram_gb": 8,
+      "roles": ["memory"],
+      "notes": "Small local embedding model for long-term memory."
+    }
+  },
+  "tiers": [
+    {
+      "id": "m_air_8gb_safe",
+      "min_ram_gb": 0,
+      "max_ram_gb": 8.9,
+      "max_model_ram_gb": 4.8,
+      "roles": {
+        "orchestrator": "qwen3:1.7b",
+        "planner": "qwen3:1.7b",
+        "navigator": "qwen3:0.6b",
+        "executor": "qwen3:0.6b",
+        "synthesizer": "qwen3:1.7b",
+        "critic": "qwen3:0.6b",
+        "router": "qwen3:0.6b",
+        "memory": "qwen3-embedding:0.6b"
+      },
+      "chatbot_threshold": 5,
+      "max_local_parallel": 1,
+      "num_ctx": 2048,
+      "keep_alive": "1m",
+      "notes": "M1/M2 MacBook Air 8 GB: plugin-first, tiny local model, very low context."
+    },
+    {
+      "id": "m_12gb_safe",
+      "min_ram_gb": 9,
+      "max_ram_gb": 13.9,
+      "max_model_ram_gb": 6.6,
+      "roles": {
+        "orchestrator": "qwen3:4b",
+        "planner": "qwen3:4b",
+        "navigator": "qwen3:1.7b",
+        "executor": "qwen3:1.7b",
+        "synthesizer": "qwen3:4b",
+        "critic": "qwen3:1.7b",
+        "router": "qwen3:1.7b",
+        "memory": "qwen3-embedding:0.6b"
+      },
+      "chatbot_threshold": 6,
+      "max_local_parallel": 1,
+      "num_ctx": 3072,
+      "keep_alive": "3m",
+      "notes": "For 12 GB unified memory or user-capped 16 GB machines."
+    },
+    {
+      "id": "m_16gb_balanced",
+      "min_ram_gb": 14,
+      "max_ram_gb": 20.9,
+      "max_model_ram_gb": 9.8,
+      "roles": {
+        "orchestrator": "qwen3:8b",
+        "planner": "qwen3:8b",
+        "navigator": "qwen3:4b",
+        "executor": "qwen3:4b",
+        "synthesizer": "qwen3:8b",
+        "critic": "qwen3:4b",
+        "router": "qwen3:4b",
+        "memory": "nomic-embed-text"
+      },
+      "chatbot_threshold": 7,
+      "max_local_parallel": 1,
+      "num_ctx": 4096,
+      "keep_alive": "5m",
+      "notes": "16 GB MacBook Pro/Air: one local job; 8B only for planner/synthesis."
+    },
+    {
+      "id": "m_24gb_balanced",
+      "min_ram_gb": 21,
+      "max_ram_gb": 28.9,
+      "max_model_ram_gb": 14.5,
+      "roles": {
+        "orchestrator": "qwen3:8b",
+        "planner": "qwen3:8b",
+        "navigator": "qwen3:4b",
+        "executor": "qwen3:4b",
+        "synthesizer": "qwen3:8b",
+        "critic": "qwen3:4b",
+        "router": "qwen3:4b",
+        "heavy": "qwen3:14b",
+        "memory": "nomic-embed-text"
+      },
+      "chatbot_threshold": 8,
+      "max_local_parallel": 1,
+      "num_ctx": 8192,
+      "keep_alive": "10m",
+      "notes": "24 GB Macs can use 14B selectively, but should still avoid parallel heavy jobs."
+    },
+    {
+      "id": "m_32gb_pro",
+      "min_ram_gb": 29,
+      "max_ram_gb": 44.9,
+      "max_model_ram_gb": 20,
+      "roles": {
+        "orchestrator": "qwen3:14b",
+        "planner": "qwen3:8b",
+        "navigator": "qwen3:4b",
+        "executor": "qwen3:4b",
+        "synthesizer": "qwen3:14b",
+        "critic": "qwen3:4b",
+        "router": "qwen3:4b",
+        "heavy": "qwen3:14b",
+        "memory": "nomic-embed-text"
+      },
+      "chatbot_threshold": 9,
+      "max_local_parallel": 2,
+      "num_ctx": 8192,
+      "keep_alive": "15m",
+      "notes": "32 GB pro/workstation class: moderate local concurrency, with 14B only when RAM and VRAM allow."
+    },
+    {
+      "id": "m_48gb_workstation",
+      "min_ram_gb": 45,
+      "max_ram_gb": 999,
+      "max_model_ram_gb": 32,
+      "roles": {
+        "orchestrator": "qwen3:14b",
+        "planner": "qwen3:14b",
+        "navigator": "qwen3:8b",
+        "executor": "qwen3:4b",
+        "synthesizer": "qwen3:14b",
+        "critic": "qwen3:8b",
+        "router": "qwen3:4b",
+        "heavy": "qwen3:32b",
+        "memory": "nomic-embed-text"
+      },
+      "chatbot_threshold": 9,
+      "max_local_parallel": 2,
+      "num_ctx": 16384,
+      "keep_alive": "20m",
+      "notes": "48 GB+ workstation tier; 32B heavy reasoning only when the GPU/unified-memory budget allows it."
+    }
+  ]
+}

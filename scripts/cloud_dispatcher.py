@@ -4,16 +4,22 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
-_MODELS_PATH = ROOT / "configs" / "models.json"
-_MODELS = json.loads(_MODELS_PATH.read_text()) if _MODELS_PATH.exists() else {}
+if __package__ in (None, ""):
+    sys.path.insert(0, str(ROOT))
+
+from scripts.model_selector import effective_models_config
+from scripts.runtime_policy import cloud_workers_allowed
+
+_MODELS = effective_models_config()
 
 MODEL_PLANNER = _MODELS.get("planner", "qwen3:8b")
-MODEL_HEAVY  = _MODELS.get("heavy", "qwen3:14b")
+MODEL_HEAVY  = _MODELS.get("heavy", "qwen3:8b")
 
 # Free cloud platforms for hosting stateless subagent workers
 CLOUD_PLATFORMS = {
@@ -30,6 +36,8 @@ OLLAMA_TUNNEL_CMD = "cloudflared tunnel --url http://localhost:11434"
 
 def get_ollama_tunnel_url() -> Optional[str]:
     """Get the tunnel URL if Ollama is exposed via cloudflared/ngrok."""
+    if not cloud_workers_allowed():
+        return None
     tunnel_env = os.environ.get("OLLAMA_TUNNEL_URL")
     if tunnel_env:
         return tunnel_env
@@ -49,6 +57,8 @@ def get_ollama_tunnel_url() -> Optional[str]:
 
 def deploy_worker(platform: str, worker_path: str) -> Dict[str, Any]:
     """Deploy a stateless subagent worker to a cloud platform."""
+    if not cloud_workers_allowed():
+        return {"success": False, "error": "Cloud worker deployment is disabled by runtime policy"}
     if platform not in CLOUD_PLATFORMS:
         return {"success": False, "error": f"Unknown platform: {platform}"}
 
@@ -80,6 +90,12 @@ def dispatch_to_cloud(
     local_fallback: bool = True
 ) -> Dict[str, Any]:
     """Dispatch a subagent task to a cloud worker, with local fallback."""
+    if not cloud_workers_allowed():
+        if local_fallback:
+            logging.warning("[dispatcher] Cloud workers disabled; falling back to local")
+            return dispatch_local(task)
+        return {"success": False, "error": "Cloud worker dispatch is disabled by runtime policy"}
+
     if not worker_url:
         # Check if we have a tunnel
         tunnel_url = get_ollama_tunnel_url()
@@ -113,7 +129,7 @@ def dispatch_local(task: Dict[str, Any]) -> Dict[str, Any]:
     prompt = f"Complete this research task and return JSON with 'findings' key:\n{goal}"
     try:
         from scripts.ollama_client import call_json
-        result = call_json(MODEL_PLANNER, prompt)
+        result = call_json(prompt, model=MODEL_PLANNER)
         return {"status": "done", "goal": goal, "output": result, "source": "local"}
     except Exception as e:
         return {"status": "error", "goal": goal, "error": str(e), "source": "local"}
@@ -121,6 +137,9 @@ def dispatch_local(task: Dict[str, Any]) -> Dict[str, Any]:
 
 def start_ollama_tunnel() -> Optional[subprocess.Popen]:
     """Start a cloudflared tunnel to expose local Ollama to the internet."""
+    if not cloud_workers_allowed():
+        logging.warning("[dispatcher] Cloud workers disabled; not starting an Ollama tunnel")
+        return None
     try:
         proc = subprocess.Popen(
             OLLAMA_TUNNEL_CMD.split(),

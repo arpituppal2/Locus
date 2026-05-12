@@ -1,6 +1,8 @@
-.venv/
-outputs/
-logs/
+/.venv/
+/outputs/
+/logs/
+/uploads/
+/configs/models.recommended.json
 __pycache__/
 *.pyc
 *.pyo
@@ -16,3 +18,4 @@ browser_steps.json
 *.jpg
 *.jpeg
 node_modules/
+lamt-brand-system/

@@ -1,0 +1,15 @@
+{
+  "id": "filesystem",
+  "name": "Local Files",
+  "version": "0.1.0",
+  "description": "Read, list, search, and write files in the active workspace.",
+  "enabled": true,
+  "keywords": ["file", "folder", "repo", "workspace", "read", "write", "edit", "upload"],
+  "capabilities": ["list_files", "read_file", "write_file", "search_text"],
+  "tools": [
+    {"name": "list_files", "risk": "read", "description": "List workspace files with ignore limits."},
+    {"name": "read_file", "risk": "read", "description": "Read a local text file."},
+    {"name": "write_file", "risk": "write", "description": "Create or replace a local file."},
+    {"name": "search_text", "risk": "read", "description": "Search workspace text files."}
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "id": "workspace",
+  "name": "Workspace",
+  "version": "0.1.0",
+  "description": "Index the active folder, detect project shape, scripts, tests, docs, TODOs, run history, and tool audit events.",
+  "enabled": true,
+  "keywords": ["workspace", "repo", "project", "index", "brief", "overview", "health", "audit", "todo", "test", "history", "runs", "approvals", "plugins", "diagnostics"],
+  "capabilities": ["workspace_index", "workspace_brief", "health_report", "todo_report", "plugin_diagnostics", "model_recommendation", "plan_task", "run_history", "tool_audit", "connector_status"],
+  "tools": [
+    {"name": "connector_status", "risk": "read", "description": "List local plugin and connector readiness."},
+    {"name": "workspace_index", "risk": "read", "description": "Build a structured index of the active workspace."},
+    {"name": "workspace_brief", "risk": "read", "description": "Render a human-readable project briefing."},
+    {"name": "health_report", "risk": "read", "description": "Summarize project shape, git state, likely checks, TODOs, and local health gaps."},
+    {"name": "todo_report", "risk": "read", "description": "List TODO/FIXME markers found in the workspace."},
+    {"name": "plugin_diagnostics", "risk": "read", "description": "Report plugin health, pending tools, connector readiness, and permission policies."},
+    {"name": "model_recommendation", "risk": "read", "description": "Recommend local models for this Mac without downloading or running them."},
+    {"name": "plan_task", "risk": "read", "description": "Show the local tool plan for a task without executing tools."},
+    {"name": "run_history", "risk": "read", "description": "List recent Locus runs for this workspace."},
+    {"name": "tool_audit", "risk": "read", "description": "List recent local tool approvals and executions."}
+  ]
+}

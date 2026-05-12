@@ -1,0 +1,12 @@
+{
+  "id": "shell",
+  "name": "Shell",
+  "version": "0.1.0",
+  "description": "Run local shell commands for builds, tests, scripts, and system checks.",
+  "enabled": true,
+  "keywords": ["shell", "terminal", "command", "run", "test", "build", "install"],
+  "capabilities": ["run_command"],
+  "tools": [
+    {"name": "run_command", "risk": "execute", "description": "Run a command inside the workspace."}
+  ]
+}

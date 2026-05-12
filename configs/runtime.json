@@ -9,5 +9,18 @@
   "idle_timeout": 2500,
   "dashboard_port": 8765,
   "outputs_dir": "outputs",
-  "logs_dir": "logs"
+  "logs_dir": "logs",
+  "allow_local_models": false,
+  "allow_external_ai": false,
+  "allow_cloud_workers": false,
+  "auto_select_models": true,
+  "auto_install_python": true,
+  "auto_install_ollama": true,
+  "auto_install_models": true,
+  "auto_headless_low_ram": true,
+  "max_gpu_percent": 95,
+  "max_ram_gb": null,
+  "minimum_recommended_ram_gb": 6,
+  "workspace_root": null,
+  "upload_limit_mb": 20
 }

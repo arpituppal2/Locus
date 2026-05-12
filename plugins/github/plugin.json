@@ -1,0 +1,19 @@
+{
+  "id": "github",
+  "name": "GitHub",
+  "version": "0.1.0",
+  "description": "Connect to GitHub through the gh CLI or a GitHub token when configured.",
+  "enabled": true,
+  "connector": {
+    "type": "github",
+    "env": ["GITHUB_TOKEN", "GH_TOKEN"],
+    "cli": "gh"
+  },
+  "keywords": ["github", "issue", "pull request", "pr", "review", "actions", "ci"],
+  "capabilities": ["connector_status", "github_issue_context", "github_pr_context"],
+  "tools": [
+    {"name": "connector_status", "risk": "read", "description": "Report local GitHub connector availability."},
+    {"name": "github_issue_context", "risk": "network", "description": "Read issue metadata when credentials are configured."},
+    {"name": "github_pr_context", "risk": "network", "description": "Read pull request metadata when credentials are configured."}
+  ]
+}

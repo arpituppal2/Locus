@@ -1,242 +1,402 @@
-"""Mission orchestrator — capability-aware multi-agent task graph execution.
-
-Execution flow:
-  1. assess_capabilities(goal)  — planner decides what modes are needed
-  2. build_task_graph(goal, cap) — planner decomposes into typed tasks
-  3. _execute_task_graph(...)   — runs tasks using the minimum required resources:
-       - response only  → Ollama, no browser
-       - online         → httpx/search API, no new tab
-       - browser        → Playwright Chromium (lazy launch)
-       - chatbot        → ai_chatbot_subagent via Playwright
-"""
+"""Research orchestrator: decomposition → retrieval → synthesis with inline citations."""
 from __future__ import annotations
+
+import argparse
+import asyncio
 import json
-import sys
-import time
 import logging
-import threading
+import re
+import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from datetime import datetime
+from typing import Any, Awaitable, Callable
+
+from scripts.claim_extractor import extract_claims
+from scripts.long_term_memory import retrieve_relevant_answers, store_query_answer
+from scripts.navigation_agent import SourceResult, collect_sources_for_subquery
+from scripts.ollama_client import (
+    MODEL_CRITIC,
+    MODEL_SYNTHESIZER,
+    async_call,
+    async_call_json,
+    async_stream_chat,
+)
+from scripts.model_selector import effective_models_config
+from scripts.resource_policy import resource_budget
+from scripts.source_scoring import SourceScore, score_source
+from scripts.task_planner import decompose_query
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
-from scripts.ollama_client import call_json, MODEL_PLANNER, MODEL_HEAVY
-from scripts.navigation_agent import run_mission
-from scripts.router import route_goal, complexity_score
-from scripts.subagents import run_parallel_subagents, dispatch
-from scripts.task_planner import (
-    build_task_graph, tasks_to_stages,
-    assess_capabilities, CapabilityPlan,
-    HEADLESS_ROLES, BROWSER_ROLES, ONLINE_ROLES,
-    _can_use_heavy,
-)
-from scripts.agent_roles import get_agent
-
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
-_rt_path = ROOT / "configs" / "runtime.json"
-_rt = json.loads(_rt_path.read_text()) if _rt_path.exists() else {}
+_MODEL_CFG = effective_models_config()
+_RESOURCE_BUDGET = resource_budget()
+_LOCAL_PARALLEL = max(1, int(_MODEL_CFG.get("max_local_parallel", 1)))
+OLLAMA_SEMAPHORE = asyncio.Semaphore(_LOCAL_PARALLEL)
+SUBQUERY_SEMAPHORE = asyncio.Semaphore(1 if _RESOURCE_BUDGET.low_ram_mode else min(2, _LOCAL_PARALLEL + 1))
 
 
-def _wait_for_browser_ready(port: int, max_wait: float = 10.0, interval: float = 0.5):
-    import httpx
-    deadline = time.time() + max_wait
-    while time.time() < deadline:
-        try:
-            httpx.get(f"http://localhost:{port}/json/version", timeout=1)
-            return True
-        except Exception:
-            time.sleep(interval)
-    return False
+@dataclass
+class EnrichedSource:
+    id: int
+    url: str
+    title: str
+    content: str
+    fetch_time_ms: int
+    claims: list[str]
+    score: float
+    domain_tier: str
+    claim_count: int
 
 
-def _safe_int(val, default: int) -> int:
-    try:
-        return int(str(val).split("-")[0].strip())
-    except (TypeError, ValueError):
-        return default
+def _normalize_url(url: str) -> str:
+    return url.rstrip("/")
 
 
-# ── Legacy plan_mission (kept for --parallel / chatbot-only flows) ────────────
+async def _emit(
+    callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None,
+    event: dict[str, Any],
+) -> None:
+    if callback is None:
+        return
+    result = callback(event)
+    if asyncio.iscoroutine(result):
+        await result
 
-def plan_mission(goal: str) -> dict:
-    parallel_keywords = ["while also", "simultaneously", "in parallel", "multiple", "&&"]
-    # Only use the heavy model if RAM allows — avoids silent 14b→8b downgrade
-    # mid-task which wastes the swap cost without the quality benefit.
-    use_heavy = any(k in goal.lower() for k in parallel_keywords) and _can_use_heavy()
-    model = MODEL_HEAVY if use_heavy else MODEL_PLANNER
 
+async def _ollama_json(prompt: str, model: str) -> dict[str, Any]:
+    async with OLLAMA_SEMAPHORE:
+        return await async_call_json(prompt, model=model)
+
+
+async def _ollama_text(prompt: str, model: str) -> str:
+    async with OLLAMA_SEMAPHORE:
+        return await async_call(prompt, model=model)
+
+
+async def _decompose(query: str) -> list[str]:
+    async with OLLAMA_SEMAPHORE:
+        return await asyncio.to_thread(decompose_query, query)
+
+
+async def _memory_recall(query: str) -> list[dict[str, Any]]:
+    async with OLLAMA_SEMAPHORE:
+        return await asyncio.to_thread(retrieve_relevant_answers, query, 3)
+
+
+async def _memory_store(query: str, answer: str, sources: list[dict[str, Any]]) -> None:
+    async with OLLAMA_SEMAPHORE:
+        await asyncio.to_thread(store_query_answer, query, answer, sources)
+
+
+async def _collect_subquery_sources(
+    sub_query: str,
+    emit_event: Callable[[dict[str, Any]], Awaitable[None] | None] | None,
+) -> list[SourceResult]:
+    async def _thinking(msg: str):
+        await _emit(emit_event, {"type": "thinking", "data": msg})
+
+    async with SUBQUERY_SEMAPHORE:
+        await _emit(emit_event, {"type": "thinking", "data": f"Searching sub-query: {sub_query}"})
+        return await collect_sources_for_subquery(sub_query, thinking_cb=_thinking)
+
+
+async def _enrich_source(source: SourceResult, source_id: int) -> EnrichedSource:
+    async with OLLAMA_SEMAPHORE:
+        claims = await asyncio.to_thread(extract_claims, source.content)
+    score: SourceScore = score_source(source.url, source.content, claims)
+    return EnrichedSource(
+        id=source_id,
+        url=source.url,
+        title=source.title,
+        content=source.content,
+        fetch_time_ms=source.fetch_time_ms,
+        claims=claims,
+        score=score.score,
+        domain_tier=score.domain_tier,
+        claim_count=score.claim_count,
+    )
+
+
+def _build_sources_prompt(sources: list[EnrichedSource]) -> str:
+    blocks: list[str] = []
+    for source in sources:
+        excerpt = re.sub(r"\s+", " ", source.content)[:600]
+        claims = " | ".join(source.claims[:6])
+        blocks.append(
+            f"[{source.id}] {source.url}\n"
+            f"TITLE: {source.title}\n"
+            f"DOMAIN_TIER: {source.domain_tier}\n"
+            f"SCORE: {source.score:.2f}\n"
+            f"CLAIMS: {claims}\n"
+            "---\n"
+            f"{excerpt}"
+        )
+    return "\n\n".join(blocks)
+
+
+def _build_memory_context(memory_hits: list[dict[str, Any]]) -> str:
+    if not memory_hits:
+        return ""
+    parts = []
+    for i, item in enumerate(memory_hits, start=1):
+        parts.append(
+            f"[M{i}] Query: {item['query']}\n"
+            f"Similarity: {item['similarity']:.3f}\n"
+            f"Answer excerpt: {(item['answer'] or '')[:500]}"
+        )
+    return "\n\n".join(parts)
+
+
+async def _stream_synthesis(
+    query: str,
+    sources: list[EnrichedSource],
+    memory_hits: list[dict[str, Any]],
+    emit_event: Callable[[dict[str, Any]], Awaitable[None] | None] | None,
+) -> str:
+    memory_context = _build_memory_context(memory_hits)
     prompt = (
-        f"Create a research mission plan for this goal: {goal}\n\n"
-        "Return JSON:\n"
-        '{"mission_name": "...", "stages": [{"stage": "...", "goal": "...", "max_steps": 15}]}'
-    )
-    plan = call_json(prompt, model=model)
-    if not plan or "stages" not in plan:
-        plan = {"mission_name": goal[:60], "stages": [{"stage": "research", "goal": goal, "max_steps": 20}]}
-
-    for s in plan.get("stages", []):
-        s["max_steps"] = _safe_int(s.get("max_steps"), 15)
-        route = route_goal(s.get("goal", goal))
-        s["chatbot_mode"]    = route["mode"] == "chatbot"
-        s["chatbot_backend"] = route.get("chatbot_backend")
-        s["complexity"]      = route["complexity"]
-
-    out_dir = ROOT / "outputs"
-    out_dir.mkdir(exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    mission_file = out_dir / f"mission_{ts}.json"
-    mission_file.write_text(json.dumps(plan, indent=2))
-    logging.info(f"[orchestrator] Mission plan saved to {mission_file}")
-    return plan
-
-
-# ── Capability-aware task graph execution ───────────────────────────────────
-
-def _execute_task_graph(goal: str) -> str:
-    """Two-phase planner → execute.
-
-    Phase 1: assess_capabilities  — what modes does this goal need?
-    Phase 2: build_task_graph     — decompose into typed tasks
-    Phase 3: execute              — use only the resources Phase 1 said we need
-    """
-    from scripts.memory import Memory
-    from scripts.navigation_agent import SEARCH_BASE
-
-    # ─ Phase 1: capability assessment ──────────────────────────────────
-    cap = assess_capabilities(goal)
-    logging.info(f"[orchestrator] capability plan: {cap.to_log()}")
-
-    # ─ Phase 2: task decomposition ────────────────────────────────────
-    tasks  = build_task_graph(goal, cap=cap)
-    stages = {t["id"]: t for t in tasks}
-
-    completed: dict[str, dict] = {}
-    memory = Memory()
-    results_lock = threading.Lock()
-
-    def _run_task(task: dict, page, context):
-        agent  = get_agent(task["role"])
-        result = agent.run(task, page=page, context=context, memory=memory)
-        with results_lock:
-            completed[task["id"]] = result
-        logging.info(f"[orchestrator] task {task['id']} ({task['role']}) → {result['status']}")
-
-    def _ready(task: dict) -> bool:
-        return all(d in completed for d in task["depends_on"])
-
-    def _run_rounds(page, context):
-        max_rounds = len(tasks) + 2
-        for _ in range(max_rounds):
-            pending = [t for t in tasks if t["id"] not in completed and _ready(t)]
-            if not pending:
-                break
-            pending.sort(key=lambda t: t["priority"])
-            # Only spin up threads when there are truly parallel tasks;
-            # for a single pending task run inline to avoid thread overhead.
-            if len(pending) == 1:
-                _run_task(pending[0], page, context)
-            else:
-                threads = [
-                    threading.Thread(target=_run_task, args=(t, page, context), daemon=True)
-                    for t in pending
-                ]
-                for th in threads: th.start()
-                for th in threads: th.join()
-
-    # ─ Phase 3: execute with minimum required resources ──────────────────
-    if cap.needs_browser:
-        logging.info("[orchestrator] browser mode — launching Chromium")
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
-            ctx     = browser.new_context()
-            page    = ctx.new_page()
-            page.goto(SEARCH_BASE + goal.replace(" ", "+"))
-            _run_rounds(page, ctx)
-            browser.close()
-    elif cap.needs_online:
-        logging.info("[orchestrator] online mode — fetching silently (no new tab)")
-        _run_rounds(page=None, context=None)  # researcher agent uses httpx internally
-    else:
-        logging.info("[orchestrator] response mode — Ollama only, no browser")
-        _run_rounds(page=None, context=None)
-
-    # Collect output: prefer writer → analyst → researcher → concatenate
-    for role in ("writer", "analyst", "researcher"):
-        for tid, res in completed.items():
-            if stages[tid]["role"] == role and res.get("findings"):
-                return res["findings"]
-
-    return "\n\n".join(
-        f"## {stages[tid]['role'].title()}: {stages[tid]['goal'][:60]}\n{res.get('findings','')}"
-        for tid, res in completed.items()
+        f"You are a research synthesizer. Given the following sources and their extracted claims,\n"
+        f"write a comprehensive answer to the query: \"{query}\"\n\n"
+        "Format rules:\n"
+        "- Write in flowing paragraphs, not bullet points\n"
+        "- After every factual sentence, append a citation like [1] or [1][3]\n"
+        "- At the end, output a SOURCES section listing each cited URL numbered [1], [2], etc.\n"
+        "- Be direct. No filler phrases like \"Based on the sources...\" or \"It's worth noting...\"\n"
+        "- If sources contradict, note the disagreement explicitly\n\n"
+        "Relevant memory from past sessions (use only if directly relevant):\n"
+        f"{memory_context or '[none]'}\n\n"
+        "SOURCES:\n"
+        f"{_build_sources_prompt(sources)}\n\n"
+        f"QUERY: {query}"
     )
 
+    tokens: list[str] = []
+    async with OLLAMA_SEMAPHORE:
+        async for token in async_stream_chat(
+            [{"role": "user", "content": prompt}],
+            model=MODEL_SYNTHESIZER,
+        ):
+            tokens.append(token)
+            await _emit(emit_event, {"type": "token", "data": token})
 
-def _execute_stages_parallel(plan: dict) -> list[dict]:
-    stages = plan.get("stages", [])
-    tasks = [
-        {
-            "goal":            s.get("goal", ""),
-            "complexity":      s.get("complexity", 0),
-            "chatbot_mode":    s.get("chatbot_mode", False),
-            "chatbot_backend": s.get("chatbot_backend"),
-        }
-        for s in stages
+    return "".join(tokens).strip()
+
+
+def _parse_followups(raw: str) -> list[str]:
+    raw = raw.strip()
+    if not raw:
+        return []
+
+    candidates: list[str] = []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            candidates = [str(x).strip() for x in parsed if str(x).strip()]
+            return candidates[:2]
+    except json.JSONDecodeError:
+        pass
+
+    start = raw.find("[")
+    end = raw.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        try:
+            parsed = json.loads(raw[start : end + 1])
+            if isinstance(parsed, list):
+                candidates = [str(x).strip() for x in parsed if str(x).strip()]
+        except json.JSONDecodeError:
+            candidates = []
+
+    return candidates[:2]
+
+
+async def _critic_followups(answer_text: str) -> list[str]:
+    prompt = (
+        "Given this answer, list up to 2 follow-up searches that would make it more complete.\n"
+        "Output as JSON array of strings, or [] if none needed.\n"
+        f"Answer: {answer_text}"
+    )
+    raw = await _ollama_text(prompt, MODEL_CRITIC)
+    return _parse_followups(raw)
+
+
+async def run_research_query(
+    query: str,
+    emit_event: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    await _emit(emit_event, {"type": "thinking", "data": "Decomposing query"})
+
+    sub_queries = await _decompose(query)
+    if not sub_queries:
+        sub_queries = [query]
+
+    await _emit(
+        emit_event,
+        {"type": "thinking", "data": f"Running {len(sub_queries)} sub-queries in parallel"},
+    )
+
+    source_batches = await asyncio.gather(
+        *[_collect_subquery_sources(sub_query, emit_event) for sub_query in sub_queries],
+        return_exceptions=False,
+    )
+
+    unique_sources: dict[str, SourceResult] = {}
+    for batch in source_batches:
+        for source in batch:
+            key = _normalize_url(source.url)
+            if key not in unique_sources:
+                unique_sources[key] = source
+
+    flat_sources = list(unique_sources.values())
+    await _emit(
+        emit_event,
+        {"type": "thinking", "data": f"Extracting claims from {len(flat_sources)} sources"},
+    )
+
+    enriched: list[EnrichedSource] = []
+    for idx, source in enumerate(flat_sources, start=1):
+        enriched_source = await _enrich_source(source, idx)
+        enriched.append(enriched_source)
+        await _emit(
+            emit_event,
+            {
+                "type": "source",
+                "data": {
+                    "id": enriched_source.id,
+                    "url": enriched_source.url,
+                    "title": enriched_source.title,
+                    "score": round(enriched_source.score, 2),
+                },
+            },
+        )
+
+    enriched.sort(key=lambda item: item.score, reverse=True)
+    ranked_sources = [
+        EnrichedSource(
+            id=i,
+            url=src.url,
+            title=src.title,
+            content=src.content,
+            fetch_time_ms=src.fetch_time_ms,
+            claims=src.claims,
+            score=src.score,
+            domain_tier=src.domain_tier,
+            claim_count=src.claim_count,
+        )
+        for i, src in enumerate(enriched, start=1)
     ]
-    logging.info(f"[orchestrator] dispatching {len(tasks)} stage(s) in parallel")
-    return run_parallel_subagents(tasks)
+
+    await _emit(emit_event, {"type": "thinking", "data": "Retrieving relevant memory"})
+    memory_hits = await _memory_recall(query)
+
+    await _emit(emit_event, {"type": "thinking", "data": "Synthesizing answer"})
+    answer = await _stream_synthesis(query, ranked_sources, memory_hits, emit_event)
+
+    # One-hop follow-up research only.
+    followups = await _critic_followups(answer)
+    if followups:
+        await _emit(
+            emit_event,
+            {"type": "thinking", "data": f"Running follow-up searches: {', '.join(followups)}"},
+        )
+
+        followup_batches = await asyncio.gather(
+            *[_collect_subquery_sources(q, emit_event) for q in followups],
+            return_exceptions=False,
+        )
+
+        followup_sources: list[SourceResult] = []
+        for batch in followup_batches:
+            followup_sources.extend(batch)
+
+        followup_dedup: dict[str, SourceResult] = {}
+        for source in followup_sources:
+            key = _normalize_url(source.url)
+            if key not in followup_dedup:
+                followup_dedup[key] = source
+
+        additional_sources: list[EnrichedSource] = []
+        for source in followup_dedup.values():
+            additional_sources.append(await _enrich_source(source, len(ranked_sources) + len(additional_sources) + 1))
+
+        if additional_sources:
+            await _emit(emit_event, {"type": "token", "data": "\n\n### Additional context\n\n"})
+            additional_prompt = (
+                "Given these follow-up sources, write a concise Additional context section.\n"
+                "Rules:\n"
+                "- Use flowing paragraphs\n"
+                "- Cite every factual sentence as [N]\n"
+                "- Mention any unresolved uncertainty\n\n"
+                f"SOURCES:\n{_build_sources_prompt(additional_sources)}\n\n"
+                f"QUERY: {query}\n"
+                f"CURRENT ANSWER:\n{answer[:4000]}"
+            )
+
+            additional_tokens: list[str] = []
+            async with OLLAMA_SEMAPHORE:
+                async for token in async_stream_chat(
+                    [{"role": "user", "content": additional_prompt}],
+                    model=MODEL_SYNTHESIZER,
+                ):
+                    additional_tokens.append(token)
+                    await _emit(emit_event, {"type": "token", "data": token})
+
+            additional_text = "".join(additional_tokens).strip()
+            if additional_text:
+                answer = f"{answer}\n\n### Additional context\n\n{additional_text}"
+                ranked_sources.extend(additional_sources)
+
+    source_payload = [
+        {
+            "id": source.id,
+            "url": source.url,
+            "title": source.title,
+            "score": source.score,
+            "domain_tier": source.domain_tier,
+            "claim_count": source.claim_count,
+            "fetch_time_ms": source.fetch_time_ms,
+            "claims": source.claims,
+        }
+        for source in ranked_sources
+    ]
+
+    await _memory_store(query, answer, source_payload)
+
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    await _emit(
+        emit_event,
+        {"type": "done", "data": {"elapsed_ms": elapsed_ms, "sources_used": len(ranked_sources)}},
+    )
+
+    return {
+        "query": query,
+        "sub_queries": sub_queries,
+        "answer": answer,
+        "sources": source_payload,
+        "elapsed_ms": elapsed_ms,
+    }
 
 
-# ── CLI entry point ────────────────────────────────────────────────────────────
-
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="local-computer mission runner")
-    parser.add_argument("goal", nargs="*", help="Goal string")
-    parser.add_argument("--parallel", action="store_true",
-                        help="Dispatch all stages as parallel subagents (legacy mode)")
-    parser.add_argument("--chatbot", metavar="BACKEND",
-                        help="Force chatbot subagent: gemini|chatgpt|claude|copilot|perplexity")
-    parser.add_argument("--simple", action="store_true",
-                        help="Skip task-graph planner; use legacy sequential stage loop")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run Locus research orchestration")
+    parser.add_argument("query", nargs="*", help="Research query")
     args = parser.parse_args()
 
-    goal = " ".join(args.goal).strip() or input("Goal: ").strip()
-    if not goal:
-        print("No goal provided."); sys.exit(1)
+    query = " ".join(args.query).strip() or input("Query: ").strip()
+    if not query:
+        raise SystemExit("No query provided")
 
-    if args.chatbot:
-        from scripts.ai_chatbot_subagent import chatbot_query
-        logging.info(f"[orchestrator] direct chatbot dispatch → {args.chatbot}")
-        result = chatbot_query(goal, backend=args.chatbot)
-        print(result["response"] or f"[ERROR] {result['error']}")
-        return
+    async def _runner() -> None:
+        result = await run_research_query(query)
+        out_path = ROOT / "outputs" / "result.md"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(result["answer"])
+        sources_path = ROOT / "outputs" / "sources.json"
+        sources_path.write_text(json.dumps(result["sources"], indent=2))
+        print(result["answer"])
 
-    if args.simple or args.parallel:
-        plan = plan_mission(goal)
-        all_chatbot = all(s.get("chatbot_mode") for s in plan.get("stages", []))
-        if args.parallel or all_chatbot:
-            results = _execute_stages_parallel(plan)
-            combined = "\n\n".join(
-                f"## Stage: {r.get('goal', '')[:80]}\n{r.get('output', {}).get('findings', r.get('output', ''))}"
-                for r in results
-            )
-            out = ROOT / "outputs" / "result.md"
-            out.write_text(combined)
-            print(combined)
-            return
-        run_mission(plan, root=ROOT)
-        return
-
-    # Default: two-phase planner → task graph
-    output = _execute_task_graph(goal)
-    out_path = ROOT / "outputs" / "result.md"
-    out_path.parent.mkdir(exist_ok=True)
-    out_path.write_text(output)
-    print(output)
+    asyncio.run(_runner())
 
 
 if __name__ == "__main__":

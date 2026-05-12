@@ -1,0 +1,15 @@
+{
+  "id": "memory",
+  "name": "Memory",
+  "version": "0.1.0",
+  "description": "Store and retrieve local query history and facts.",
+  "enabled": true,
+  "keywords": ["memory", "remember", "history", "recall", "previous"],
+  "capabilities": ["connector_status", "list_recent_queries", "retrieve_relevant_answers", "store_query_answer"],
+  "tools": [
+    {"name": "connector_status", "risk": "read", "description": "Report local memory capability readiness."},
+    {"name": "list_recent_queries", "risk": "read", "description": "Read recent local memory entries."},
+    {"name": "retrieve_relevant_answers", "risk": "read", "description": "Retrieve relevant local memory entries."},
+    {"name": "store_query_answer", "risk": "write", "description": "Write a local memory entry."}
+  ]
+}

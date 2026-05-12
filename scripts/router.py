@@ -1,7 +1,7 @@
-"""Goal routing: chatbot UI | workflow | search | browse.
+"""Goal routing: local-first workflow | search | browse, with opt-in chatbot UI.
 
 Routing hierarchy (first match wins):
-  1. chatbot — explicit AI assistant request, or high-complexity reasoning
+  1. chatbot — only when external AI is explicitly enabled
   2. workflow — known productivity app (Docs, Drive, Calendar, etc.)
   3. search — information lookup
   4. browse — default general navigation
@@ -9,8 +9,10 @@ Routing hierarchy (first match wins):
 from __future__ import annotations
 import re
 
+from scripts.runtime_policy import external_ai_allowed
+
 # ── Chatbot trigger patterns ───────────────────────────────────────────────────
-# These tell the orchestrator to use AI chatbot UI subagents instead of local Ollama
+# These can route to AI chatbot UI subagents only when external AI is enabled.
 _CHATBOT_PATTERNS: list[tuple[str, str]] = [
     # Explicit backend requests
     (r'\bask\s+gemini\b',      "gemini"),
@@ -26,7 +28,7 @@ _CHATBOT_PATTERNS: list[tuple[str, str]] = [
     (r'\buse\s+copilot\b',     "copilot"),
     (r'\bask\s+perplexity\b',  "perplexity"),
     (r'\buse\s+perplexity\b',  "perplexity"),
-    # Implicit heavy-reasoning triggers (route to auto-selected chatbot)
+    # Implicit heavy-reasoning triggers for opt-in external routing.
     (r'\bprove\s+that\b',      "auto"),
     (r'\bderive\s+',           "auto"),
     (r'\brefactor.*entire\b',  "auto"),
@@ -51,10 +53,7 @@ _APP_ROUTES: list[tuple[str, str]] = [
 
 
 def complexity_score(goal: str) -> int:
-    """Estimate task complexity 0-10.
-
-    >= 7 → recommend chatbot routing (too heavy for local 8b model).
-    """
+    """Estimate task complexity 0-10 for local planning and optional routing."""
     g = goal.lower()
     score = 0
     # Length signals complexity
@@ -82,7 +81,7 @@ def route_goal(goal: str) -> dict:
     -------
     dict with keys:
         mode (str): 'chatbot' | 'workflow' | 'search' | 'browse'
-        url (str): start URL (chatbot sites included)
+        url (str): start URL
         chatbot_backend (str | None): which AI chatbot to use
         complexity (int): 0-10 complexity score
         answer (str): empty — filled by agent later
@@ -93,11 +92,26 @@ def route_goal(goal: str) -> dict:
 
     score = complexity_score(goal)
 
-    # 1. Explicit chatbot routes
-    for pattern, backend in _CHATBOT_PATTERNS:
-        if re.search(pattern, g):
-            from scripts.ai_chatbot_subagent import BACKENDS, DEFAULT_BACKEND
-            resolved = backend if backend != "auto" else _auto_pick(g)
+    # 1. Explicit chatbot routes only after opt-in.
+    if external_ai_allowed():
+        for pattern, backend in _CHATBOT_PATTERNS:
+            if re.search(pattern, g):
+                from scripts.ai_chatbot_subagent import BACKENDS, DEFAULT_BACKEND
+                resolved = backend if backend != "auto" else _auto_pick(g)
+                return {
+                    "mode": "chatbot",
+                    "url": BACKENDS.get(resolved, BACKENDS[DEFAULT_BACKEND])["url"],
+                    "chatbot_backend": resolved,
+                    "complexity": score,
+                    "answer": "",
+                }
+
+    # 2. High complexity can route to chatbot only after opt-in.
+    if external_ai_allowed():
+        from scripts.ollama_client import CHATBOT_THRESHOLD
+        if score >= CHATBOT_THRESHOLD:
+            from scripts.ai_chatbot_subagent import pick_best_backend, BACKENDS, DEFAULT_BACKEND
+            resolved = pick_best_backend(goal)
             return {
                 "mode": "chatbot",
                 "url": BACKENDS.get(resolved, BACKENDS[DEFAULT_BACKEND])["url"],
@@ -105,19 +119,6 @@ def route_goal(goal: str) -> dict:
                 "complexity": score,
                 "answer": "",
             }
-
-    # 2. High complexity → auto chatbot
-    from scripts.ollama_client import CHATBOT_THRESHOLD
-    if score >= CHATBOT_THRESHOLD:
-        from scripts.ai_chatbot_subagent import pick_best_backend, BACKENDS, DEFAULT_BACKEND
-        resolved = pick_best_backend(goal)
-        return {
-            "mode": "chatbot",
-            "url": BACKENDS.get(resolved, BACKENDS[DEFAULT_BACKEND])["url"],
-            "chatbot_backend": resolved,
-            "complexity": score,
-            "answer": "",
-        }
 
     # 3. Workflow / app routes
     for pattern, dest in _APP_ROUTES:

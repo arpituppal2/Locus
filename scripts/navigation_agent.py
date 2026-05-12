@@ -1,392 +1,270 @@
 #!/usr/bin/env python3
-"""
-scripts/navigation_agent.py
-Primary research loop — API-first, browser fallback.
-"""
+"""Playwright Chromium navigation + multi-source page extraction."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import re
-import sys
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any, Awaitable, Callable
+from urllib.parse import quote_plus
 
-ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
+from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
-from scripts.critic_agent       import critique
-from scripts.search_api         import search as api_search
-from scripts.ollama_client      import MODEL_ACTOR, MODEL_HEAVY, MODEL_PLANNER, call, call_json
-from scripts.observer           import observe
-from scripts.executor           import execute
-from playwright.sync_api        import sync_playwright
-from scripts.memory             import Memory
-from scripts.event_logger       import EventLogger
-from scripts.claim_extractor    import extract_claims
-from scripts.source_scoring     import score_source, domain_of
-from scripts.claim_cluster      import cluster_claims
-from scripts.long_term_memory   import should_read, read_relevant, manage_memory
+from scripts.event_logger import EventLogger
+from scripts.resource_policy import resource_budget
 
-RT_FILE  = ROOT / "configs" / "runtime.json"
-RUNTIME  = json.loads(RT_FILE.read_text()) if RT_FILE.exists() else {}
-OUT_DIR  = ROOT / RUNTIME.get("outputs_dir", "outputs")
-LOG_DIR  = ROOT / RUNTIME.get("logs_dir", "logs")
-MAX_STEPS = RUNTIME.get("max_steps_per_stage", 25)
-
-SEARCH_BASE       = "https://www.bing.com/search?q="
-HIGH_SCORE_THRESH = 4
-EVIDENCE_GOAL_BASE = 6
-
-_LOCAL_KEYWORDS = (
-    "test", "hello", "ping", "echo", "debug", "check",
-    "calculate", "compute", "convert", "summarize this",
-    "write a", "generate a", "create a", "list the",
-    "what is 2", "what is 1",
+ROOT = Path(__file__).resolve().parent.parent
+RT_FILE = ROOT / "configs" / "runtime.json"
+RUNTIME = json.loads(RT_FILE.read_text()) if RT_FILE.exists() else {}
+OUT_DIR = ROOT / RUNTIME.get("outputs_dir", "outputs")
+RESOURCE_BUDGET = resource_budget()
+LOW_RAM_MODE = RESOURCE_BUDGET.low_ram_mode
+HEADLESS_BROWSER = bool(RUNTIME.get("headless", False)) or (
+    LOW_RAM_MODE and bool(RUNTIME.get("auto_headless_low_ram", True))
 )
+MAX_RESULT_URLS = 3 if LOW_RAM_MODE else 5
+MAX_FETCH_TABS = 1 if LOW_RAM_MODE else 3
+MAX_SOURCE_CHARS = 9000 if LOW_RAM_MODE else 18000
 
-# ── macOS / 16 GB: disable GPU in the automation window so all GPU
-#    budget stays with Ollama and the dashboard.  channel="chrome"
-#    also bypasses macOS sandbox restrictions that silently drop
-#    Playwright click/type events on many real-world sites.
-_BROWSER_ARGS = [
-    "--disable-gpu",
-    "--disable-gpu-rasterization",
-    "--disable-gpu-compositing",
-    "--disable-software-rasterizer",
-    "--disable-dev-shm-usage",
-    "--no-sandbox",
-    "--disable-extensions",
-    "--disable-background-networking",
-    "--disable-background-timer-throttling",
-    "--disable-renderer-backgrounding",
-    "--disable-backgrounding-occluded-windows",
-]
+SEARCH_BASE = "https://www.google.com/search?q="
 
-# JS injected once per page: only block isTrusted (real human) events
-_LOCK_SCRIPT = """
-(() => {
-  if (window.__agentLockInstalled) return;
-  window.__agentLockInstalled = true;
-  window.__agentLock = true;
-  const block = e => {
-    if (window.__agentLock && e.isTrusted) {
-      e.stopImmediatePropagation();
-      e.preventDefault();
-    }
-  };
-  ['click','mousedown','keydown','keypress','keyup','pointerdown'].forEach(
-    t => document.addEventListener(t, block, true)
+
+@dataclass
+class SourceResult:
+    url: str
+    title: str
+    content: str
+    fetch_time_ms: int
+
+
+CLEAN_TEXT_SCRIPT = """
+() => {
+  const unwanted = document.querySelectorAll(
+    'nav, footer, header, script, style, iframe, .cookie-banner, #cookie'
   );
-})();
+  unwanted.forEach(el => el.remove());
+  return document.body.innerText.trim();
+}
 """
 
-_BANNER_SCRIPT = """
-(() => {
-  if (document.getElementById('lc-agent-banner')) return;
-  const b = document.createElement('div');
-  b.id = 'lc-agent-banner';
-  Object.assign(b.style, {
-    position:'fixed', top:'0', left:'0', width:'100%', height:'28px',
-    background:'#060c14', color:'#18c9c9',
-    font:'500 10px/28px "DM Mono",ui-monospace,monospace',
-    textAlign:'center', zIndex:'2147483647', pointerEvents:'none',
-    userSelect:'none', letterSpacing:'.08em', borderBottom:'1px solid rgba(24,201,201,.18)'
-  });
-  b.textContent = 'LC AGENT ACTIVE — READ ONLY';
-  document.body && document.body.prepend(b);
-})();
+RESULT_URLS_SCRIPT = r"""
+() => {
+  const links = Array.from(document.querySelectorAll('a[href]'));
+  const seen = new Set();
+  const urls = [];
+
+  for (const a of links) {
+    const href = a.getAttribute('href') || '';
+    let candidate = '';
+
+    if (href.startsWith('/url?')) {
+      const parsed = new URL(href, location.origin);
+      candidate = parsed.searchParams.get('q') || '';
+    } else if (/^https?:\/\//.test(href) && a.querySelector('h3')) {
+      candidate = href;
+    }
+
+    if (!candidate) continue;
+
+    try {
+      const parsedCandidate = new URL(candidate);
+      const host = parsedCandidate.hostname.toLowerCase();
+      if (host.includes('google.com')) continue;
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      urls.push(candidate);
+    } catch (_) {
+      continue;
+    }
+
+    if (urls.length >= 5) break;
+  }
+
+  return urls;
+}
 """
 
 
-def _needs_web(goal: str) -> bool:
-    g = goal.lower().strip()
-    if any(k in g for k in _LOCAL_KEYWORDS):
-        return False
-    verdict = call_json(
-        f"Does answering this goal require browsing the web or searching for "
-        f"current information?\nGoal: {goal}\n"
-        f'Reply with JSON: {{"needs_web": true}} or {{"needs_web": false}}',
-        model=MODEL_PLANNER,
+async def _emit(
+    callback: Callable[[str], Awaitable[None] | None] | None,
+    message: str,
+) -> None:
+    if callback is None:
+        return
+    result = callback(message)
+    if asyncio.iscoroutine(result):
+        await result
+
+
+def get_browser_and_page(p: "playwright.sync_api.Playwright"):
+    browser = p.chromium.launch(
+        headless=HEADLESS_BROWSER,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+            "--disable-extensions",
+            "--disable-sync",
+            "--disable-background-networking",
+            "--no-sandbox",
+            "--disable-gpu-sandbox",
+            "--use-angle=metal",
+            "--enable-features=UseOzonePlatform",
+        ],
     )
-    return bool((verdict or {}).get("needs_web", True))
-
-
-def adaptive_evidence_goal(memory: Memory) -> int:
-    base  = EVIDENCE_GOAL_BASE
-    bonus = len(set(e.get("source_domain", "") for e in memory.evidence))
-    return base + max(0, 3 - bonus)
-
-
-def _harvest_from_api(query: str, memory: Memory, log: EventLogger) -> int:
-    hits = api_search(query, max_results=10)
-    new_claims = 0
-    for hit in hits:
-        url = hit["url"]
-        if any(e.get("url") == url for e in memory.evidence):
-            continue
-        snippet = hit["snippet"]
-        if len(snippet) < 40:
-            continue
-        claims = extract_claims(hit["title"], url, snippet) or [snippet[:300]]
-        score  = score_source(url, hit["title"], snippet)
-        memory.add_evidence({
-            "url":           url,
-            "title":         hit["title"],
-            "score":         score,
-            "source_domain": domain_of(url),
-            "claims":        claims,
-        })
-        new_claims += len(claims)
-        log.log("api_evidence", url=url, score=score, claims=len(claims))
-    return new_claims
-
-
-def _inject_lock(page):
-    """Inject the human-input block + banner, swallow errors."""
-    try:
-        page.evaluate(_LOCK_SCRIPT)
-        page.evaluate(_BANNER_SCRIPT)
-    except Exception:
-        pass
-
-
-def decide_action(goal: str, state: dict, memory: Memory, step: int) -> dict:
-    targets = state.get("candidate_targets") or []
-    targets_brief = [
-        f"[{t['target_id']}] {t['kind']} {t['text'][:80]}" for t in targets[:30]
-    ]
-    recent_actions = [
-        f"{r['action'].get('action')} -> {r['result'].get('ok')}"
-        for r in list(memory.recent_actions)[-8:]
-    ]
-    recent_failures = [
-        f"{r['action'].get('action')} {r['action'].get('target', {}).get('text','')[:40]}"
-        for r in list(memory.recent_failures)[-4:]
-    ]
-    prior_block = f"\nPRIOR CONTEXT FROM MEMORY:\n{memory.prior_context[:800]}\n" \
-        if memory.prior_context else ""
-
-    prompt = f"""
-You are a research agent.
-GOAL: {goal}
-{prior_block}
-STATE:
-URL: {state.get('url')}
-TITLE: {state.get('title')}
-TEXT:
-{(state.get('visible_text') or '')[:1500]}
-TARGETS:
-{chr(10).join(targets_brief)}
-RECENT ACTIONS:
-{chr(10).join(recent_actions)}
-RECENT FAILURES:
-{chr(10).join(recent_failures)}
-RULES: use search, navigate, click, fill, press, scroll, go_back, finish. Avoid repeating failures. Return JSON only.
-"""
-    return call_json(prompt, model=MODEL_ACTOR) or {}
-
-
-def _already_visited(url: str, memory: Memory) -> bool:
-    return any(e.get("url") == url for e in memory.evidence)
-
-
-def process_page(state: dict, memory: Memory, log: EventLogger) -> int:
-    text = state.get("visible_text", "")
-    url  = state.get("url", "")
-    if len(text) < 200 or _already_visited(url, memory):
-        return 0
-    score  = score_source(url, state.get("title", ""), text)
-    claims = extract_claims(state.get("title", ""), url, text)
-    if not claims:
-        return 0
-    memory.add_evidence({
-        "url":           url,
-        "title":         state.get("title", ""),
-        "score":         score,
-        "source_domain": domain_of(url),
-        "claims":        claims,
-    })
-    log.log("evidence", url=url, score=score, claim_count=len(claims))
-    return len(claims)
-
-
-def enough_evidence(memory: Memory) -> bool:
-    if len(memory.evidence) < adaptive_evidence_goal(memory):
-        return False
-    trusted = sum(1 for e in memory.evidence if e.get("score", 0) >= HIGH_SCORE_THRESH)
-    domains  = len(set(e.get("source_domain") for e in memory.evidence))
-    return trusted >= 2 and domains >= 2
-
-
-def run_stage(page, context, goal: str, stage: dict, memory: Memory, log: EventLogger) -> bool:
-    stage_goal = stage.get("goal", goal)
-    max_steps  = min(stage.get("max_steps", 20), MAX_STEPS)
-    log.log("stage_start", goal=stage_goal)
-
-    # Fast path: API search first
-    api_claims = _harvest_from_api(stage_goal, memory, log)
-    log.log("api_search_done", new_claims=api_claims, query=stage_goal)
-    if enough_evidence(memory):
-        log.log("done_via_api", evidence=len(memory.evidence))
-        return True
-
-    # Browser fallback — lock human input but leave Playwright CDP events intact
-    _inject_lock(page)
-
-    for step in range(max_steps):
-        state = observe(page)
-        crit  = critique(stage_goal, memory, state)
-        log.log("critique", **crit)
-
-        if crit.get("is_stuck"):
-            q = crit.get("suggested_query") or stage_goal
-            if _harvest_from_api(q, memory, log) > 0 and enough_evidence(memory):
-                return True
-            action = {"action": "navigate", "value": SEARCH_BASE + q.replace(" ", "+")}
-            result = execute(page, context, action)
-            memory.record_action(action, result)
-            _inject_lock(page)
-            continue
-
-        process_page(state, memory, log)
-        if enough_evidence(memory):
-            log.log("done", evidence=len(memory.evidence))
-            return True
-
-        raw         = decide_action(stage_goal, state, memory, step)
-        action_type = raw.get("action", "scroll")
-
-        if action_type == "search":
-            q = raw.get("value", stage_goal)
-            if _harvest_from_api(q, memory, log) > 0:
-                memory.record_action({"action": "search", "value": q}, {"ok": True})
-            else:
-                action = {"action": "navigate", "value": SEARCH_BASE + q.replace(" ", "+")}
-                result = execute(page, context, action)
-                memory.record_action(action, result)
-                _inject_lock(page)
-        elif action_type == "finish":
-            return True
-        else:
-            result = execute(page, context, raw)
-            memory.record_action(raw, result)
-            if not result.get("ok"):
-                log.log("action_failed", action=action_type)
-            if action_type in ("goto", "navigate", "click", "press"):
-                _inject_lock(page)
-
-        try:
-            page.wait_for_load_state("domcontentloaded", timeout=3000)
-        except Exception:
-            pass
-
-    return enough_evidence(memory)
-
-
-def get_browser_and_page(p):
-    """Launch Chromium with GPU disabled to preserve unified memory for Ollama.
-    Uses channel='chrome' on macOS so Playwright receives real CDP events
-    instead of being silently dropped by the macOS sandbox."""
-    try:
-        # Prefer real Chrome install (bypasses macOS accessibility sandbox)
-        browser = p.chromium.launch(
-            headless=False,
-            channel="chrome",
-            args=_BROWSER_ARGS,
-        )
-    except Exception:
-        # Fallback to bundled Chromium if Chrome is not installed
-        browser = p.chromium.launch(
-            headless=False,
-            args=_BROWSER_ARGS,
-        )
-
     ctx = browser.new_context(
-        viewport={"width": 1280, "height": 800},
-        java_script_enabled=True,
+        viewport={"width": 1280, "height": 900},
+        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36",
     )
+    return browser, ctx, ctx.new_page(), "chromium"
 
-    # Inject lock + banner on every navigation
-    ctx.add_init_script(_LOCK_SCRIPT)
-    ctx.add_init_script(_BANNER_SCRIPT)
 
-    page = ctx.new_page()
+async def _get_browser_and_page_async(p) -> tuple[Browser, BrowserContext, Page, str]:
+    browser = await p.chromium.launch(
+        headless=HEADLESS_BROWSER,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+            "--disable-extensions",
+            "--disable-sync",
+            "--disable-background-networking",
+            "--no-sandbox",
+            "--disable-gpu-sandbox",
+            "--use-angle=metal",
+            "--enable-features=UseOzonePlatform",
+        ],
+    )
+    ctx = await browser.new_context(
+        viewport={"width": 1280, "height": 900},
+        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36",
+    )
+    page = await ctx.new_page()
     return browser, ctx, page, "chromium"
 
 
-def run_mission(plan: dict, root: Path | None = None):
-    global OUT_DIR, LOG_DIR
-    if root:
-        rt_file = root / "configs" / "runtime.json"
-        rt = json.loads(rt_file.read_text()) if rt_file.exists() else {}
-        OUT_DIR = root / rt.get("outputs_dir", "outputs")
-        LOG_DIR = root / rt.get("logs_dir", "logs")
-
-    goal   = plan.get("mission_name", "research")
-    log    = EventLogger(OUT_DIR)
-    memory = Memory()
-
-    if should_read(goal):
-        prior = read_relevant(goal)
-        if prior:
-            log.log("ltm_read", chars=len(prior))
-            memory.inject_prior_context(prior)
-
-    if not _needs_web(goal):
-        log.log("no_web", goal=goal)
-        result = call(f"Answer the following directly without browsing:\n{goal}", model=MODEL_HEAVY)
-        Path(OUT_DIR).mkdir(exist_ok=True)
-        (OUT_DIR / "result.md").write_text(result)
-        manage_memory(goal, memory, result)
-        print(result)
-        return result
-
-    # API-only fast path
-    fast_mem = Memory()
-    if memory.prior_context:
-        fast_mem.inject_prior_context(memory.prior_context)
-    fast_log = EventLogger(OUT_DIR)
-    fast_claims = _harvest_from_api(goal, fast_mem, fast_log)
-    if enough_evidence(fast_mem):
-        log.log("api_only_sufficient", claims=fast_claims)
-        for e in fast_mem.evidence:
-            memory.add_evidence(e)
-        clusters = cluster_claims(memory.evidence)
-        result = call(f"Synthesize:\n{clusters}", model=MODEL_HEAVY)
-        Path(OUT_DIR).mkdir(exist_ok=True)
-        (OUT_DIR / "result.md").write_text(result)
-        manage_memory(goal, memory, result)
-        print(result)
-        return result
-
-    for e in fast_mem.evidence:
-        memory.add_evidence(e)
-
-    with sync_playwright() as p:
-        browser, ctx, page, mode = get_browser_and_page(p)
-        start_url = plan.get("start_url") or (SEARCH_BASE + goal.replace(" ", "+"))
-        page.goto(start_url)
-        for stage in plan.get("stages", []):
-            if run_stage(page, ctx, goal, stage, memory, log):
-                break
-        clusters = cluster_claims(memory.evidence) if memory.evidence else []
-        result = (
-            call(f"Synthesize:\n{clusters}", model=MODEL_HEAVY)
-            if memory.evidence else "# No evidence collected"
+async def _fetch_source(
+    ctx: BrowserContext,
+    url: str,
+    logger: EventLogger,
+    thinking_cb: Callable[[str], Awaitable[None] | None] | None,
+) -> SourceResult | None:
+    page = await ctx.new_page()
+    started = time.perf_counter()
+    try:
+        await page.goto(url, timeout=15000, wait_until="domcontentloaded")
+        title = await page.title()
+        canonical = await page.evaluate(
+            """
+            () => {
+              const canonical = document.querySelector('link[rel="canonical"]');
+              return canonical?.href || window.location.href;
+            }
+            """,
+            timeout=5000,
         )
-        Path(OUT_DIR).mkdir(exist_ok=True)
-        (OUT_DIR / "result.md").write_text(result)
-        manage_memory(goal, memory, result)
-        log.log("ltm_manage_done", goal=goal)
-        print(result)
-        return result
+        content = await page.evaluate(CLEAN_TEXT_SCRIPT, timeout=5000)
+        content = str(content or "")[:MAX_SOURCE_CHARS]
+        fetch_time_ms = int((time.perf_counter() - started) * 1000)
+        await _emit(thinking_cb, f"Read source: {canonical or url}")
+        return SourceResult(
+            url=str(canonical or url),
+            title=str(title or "Untitled"),
+            content=str(content or ""),
+            fetch_time_ms=fetch_time_ms,
+        )
+    except Exception as exc:
+        logger.log("source_fetch_failed", url=url, error=str(exc))
+        return None
+    finally:
+        try:
+            await page.close()
+        except Exception:
+            pass
 
 
-def main():
-    mission = json.loads(Path(sys.argv[1]).read_text())
-    run_mission(mission)
+async def collect_sources_for_subquery(
+    sub_query: str,
+    thinking_cb: Callable[[str], Awaitable[None] | None] | None = None,
+    logger: EventLogger | None = None,
+) -> list[SourceResult]:
+    logger = logger or EventLogger(OUT_DIR)
+
+    async with async_playwright() as p:
+        browser: Browser | None = None
+        ctx: BrowserContext | None = None
+        page: Page | None = None
+        try:
+            browser, ctx, page, _ = await _get_browser_and_page_async(p)
+            encoded = quote_plus(sub_query)
+            search_url = f"{SEARCH_BASE}{encoded}"
+
+            await _emit(thinking_cb, f"Searching: {sub_query}")
+            await page.goto(search_url, timeout=15000, wait_until="domcontentloaded")
+            result_urls_raw = await page.evaluate(RESULT_URLS_SCRIPT, timeout=5000)
+            result_urls = [str(u) for u in (result_urls_raw or [])][:MAX_RESULT_URLS]
+            logger.log("search_results", query=sub_query, count=len(result_urls))
+
+            if not result_urls:
+                await _emit(thinking_cb, f"No organic results found for sub-query: {sub_query}")
+                return []
+
+            await _emit(
+                thinking_cb,
+                f"Opening {min(MAX_FETCH_TABS, len(result_urls))} tabs for sub-query: {sub_query}",
+            )
+            tab_limit = asyncio.Semaphore(MAX_FETCH_TABS)
+
+            async def _bounded_fetch(target_url: str) -> SourceResult | None:
+                async with tab_limit:
+                    return await _fetch_source(ctx, target_url, logger, thinking_cb)
+
+            tasks = [asyncio.create_task(_bounded_fetch(url)) for url in result_urls]
+            fetched = await asyncio.gather(*tasks, return_exceptions=False)
+            sources = [src for src in fetched if isinstance(src, SourceResult) and src.content.strip()]
+            logger.log("subquery_complete", query=sub_query, sources=len(sources))
+            return sources
+        finally:
+            if ctx is not None:
+                for open_page in list(ctx.pages):
+                    try:
+                        await open_page.close()
+                    except Exception:
+                        pass
+                try:
+                    await ctx.close()
+                except Exception:
+                    pass
+            if browser is not None:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
 
 
-if __name__ == "__main__":
-    main()
+def run_mission(plan: dict, root: Path | None = None):
+    """Legacy compatibility wrapper.
+
+    The new orchestration pipeline lives in scripts/orchestrator.py.
+    This function preserves import compatibility for older entry points.
+    """
+    query = plan.get("mission_name") or plan.get("query") or ""
+    if not query:
+        return ""
+
+    async def _run() -> str:
+        logger = EventLogger((root or ROOT) / "outputs")
+        sources = await collect_sources_for_subquery(query, logger=logger)
+        payload = [asdict(src) for src in sources]
+        out_dir = (root or ROOT) / "outputs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "raw_sources.json"
+        out_path.write_text(json.dumps(payload, indent=2))
+        return out_path.read_text()
+
+    return asyncio.run(_run())

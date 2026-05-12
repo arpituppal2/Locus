@@ -6,8 +6,10 @@ from pathlib import Path
 
 import requests
 
+from scripts.ollama_client import DEFAULT_OLLAMA_OPTIONS, MODEL_PLANNER
+
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL      = "qwen3:4b"
+MODEL      = MODEL_PLANNER
 TASKS_DIR  = Path(__file__).resolve().parent.parent / "tasks"
 
 PROMPT = (Path(__file__).resolve().parent.parent / "prompts" / "browser_steps.txt").read_text
@@ -22,7 +24,7 @@ def extract_json_block(text: str) -> str:
 
 def call_planner(task: str) -> dict:
     prompt_text = PROMPT() if callable(PROMPT) else PROMPT
-    payload = {"model": MODEL, "prompt": prompt_text + "\n\nTask:\n" + task, "stream": False}
+    payload = {"model": MODEL, "prompt": prompt_text + "\n\nTask:\n" + task, "stream": False, "options": DEFAULT_OLLAMA_OPTIONS}
     resp = requests.post(OLLAMA_URL, json=payload, timeout=300)
     resp.raise_for_status()
     text = resp.json()["response"]

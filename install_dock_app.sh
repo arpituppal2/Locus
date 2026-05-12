@@ -4,12 +4,12 @@
 # and optionally adds it to the Dock.
 #
 # Usage:  bash install_dock_app.sh
-# The app is placed in ~/Applications/local-computer.app
+# The app is placed in ~/Applications/Locus.app
 
 set -e
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_NAME="local-computer"
+APP_NAME="Locus"
 APP_DIR="$HOME/Applications/$APP_NAME.app"
 
 echo "==> Building $APP_DIR"
@@ -25,9 +25,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleIdentifier</key>  <string>com.local-computer.app</string>
-  <key>CFBundleName</key>        <string>local-computer</string>
-  <key>CFBundleDisplayName</key> <string>local-computer</string>
+  <key>CFBundleIdentifier</key>  <string>com.locus.local.app</string>
+  <key>CFBundleName</key>        <string>Locus</string>
+  <key>CFBundleDisplayName</key> <string>Locus</string>
   <key>CFBundleVersion</key>     <string>1.0</string>
   <key>CFBundleExecutable</key>  <string>launcher</string>
   <key>CFBundleIconFile</key>    <string>AppIcon</string>
@@ -65,21 +65,23 @@ pad = 40
 draw.rounded_rectangle([pad, pad, size-pad, size-pad],
                        radius=90, fill=(22, 21, 19, 255))
 
-# Teal accent square
-inner = 140
+# Teal nested locus mark
+inner = 132
 draw.rounded_rectangle([inner, inner, size-inner, size-inner],
-                       radius=40, fill=(1, 105, 111, 255))
+                       radius=46, fill=(25, 96, 102, 255))
+draw.rounded_rectangle([inner+58, inner+58, size-inner-58, size-inner-58],
+                       radius=30, fill=(139, 198, 189, 255))
 
-# Letter LC in white
+# Letter L in white
 try:
     font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 170)
 except Exception:
     font = ImageFont.load_default()
 
-draw.text((size//2, size//2), "LC", fill=(255,255,255,255),
+draw.text((size//2, size//2), "L", fill=(255,255,255,245),
           font=font, anchor="mm")
 
-out = os.path.expanduser("~/Applications/local-computer.app/Contents/Resources/AppIcon.png")
+out = os.path.expanduser("~/Applications/Locus.app/Contents/Resources/AppIcon.png")
 img.save(out)
 print(f"Icon saved: {out}")
 PYICON
@@ -115,7 +117,7 @@ defaults write com.apple.dock persistent-apps -array-add \
 killall Dock
 
 echo ""
-echo "✓  local-computer.app installed to ~/Applications/"
+echo "✓  Locus.app installed to ~/Applications/"
 echo "✓  Added to your Dock (Dock will restart briefly)"
 echo ""
 echo "Double-click the Dock icon — or run:  open \"$APP_DIR\""

@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """
-LocalComputer.py — one-click launcher for local-computer.
+LocalComputer.py - legacy one-click launcher for Locus.
 
 Run from anywhere:
-    python3 ~/local-computer/LocalComputer.py
+    python3 ~/Locus/LocalComputer.py
 
 What it does (automatically, every time):
   1. Pulls latest code from GitHub
   2. Creates a venv if one doesn't exist
   3. Installs / updates dependencies
   4. Installs Playwright Chromium if missing
-  5. Starts Ollama (if not already running)
-  6. Starts the Flask UI server
-  7. Opens http://127.0.0.1:7878 in your default browser
+  5. Skips Ollama unless local model mode is explicitly enabled
+  6. Starts the Locus UI server
+  7. Opens http://127.0.0.1:8765 in your default browser
 """
 
 import os
 import sys
+import json
 import subprocess
 import time
 import webbrowser
@@ -25,8 +26,8 @@ from pathlib import Path
 # ── Paths ────────────────────────────────────────────────────────────────────
 
 ROOT   = Path(__file__).resolve().parent
-VENV   = ROOT / "venv"
-PORT   = 7878
+VENV   = ROOT / ".venv"
+PORT   = 8765
 URL    = f"http://127.0.0.1:{PORT}"
 
 # Python inside the venv
@@ -50,6 +51,17 @@ def run_silent(cmd: list[str]) -> subprocess.CompletedProcess:
 
 def step(msg: str):
     print(f"\n{'─'*50}\n  {msg}\n{'─'*50}")
+
+
+def local_models_enabled() -> bool:
+    env = os.environ.get("LOCAL_COMPUTER_ALLOW_MODELS")
+    if env is not None:
+        return env.strip().lower() in {"1", "true", "yes", "on", "allow", "enabled"}
+    try:
+        runtime = json.loads((ROOT / "configs" / "runtime.json").read_text())
+    except Exception:
+        runtime = {}
+    return bool(runtime.get("allow_local_models", False))
 
 
 # ── 1. Git pull ───────────────────────────────────────────────────────────────
@@ -102,6 +114,13 @@ def ensure_playwright():
 # ── 5. Ollama ─────────────────────────────────────────────────────────────────
 
 def ensure_ollama():
+    if not local_models_enabled():
+        step("Local models disabled")
+        os.environ["LOCAL_COMPUTER_ALLOW_MODELS"] = "0"
+        os.environ.setdefault("LOCAL_COMPUTER_SKIP_MODEL_VALIDATE", "1")
+        print("  Skipping Ollama startup. Set LOCAL_COMPUTER_ALLOW_MODELS=1 to enable local inference.")
+        return
+
     step("Checking Ollama…")
     # Is ollama installed?
     result = run_silent(["which", "ollama"])
@@ -136,8 +155,11 @@ def ensure_ollama():
 # ── 6. UI Server ──────────────────────────────────────────────────────────────
 
 def start_server() -> subprocess.Popen:
-    step(f"Starting UI server on {URL} …")
+    step(f"Starting Locus on {URL} …")
     env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    if not local_models_enabled():
+        env["LOCAL_COMPUTER_ALLOW_MODELS"] = "0"
+        env.setdefault("LOCAL_COMPUTER_SKIP_MODEL_VALIDATE", "1")
     proc = subprocess.Popen(
         [str(VENV_PY), str(ROOT / "scripts" / "ui_server.py"), "--port", str(PORT)],
         cwd=str(ROOT),
@@ -172,7 +194,7 @@ def open_browser():
 
 def main():
     print("\n" + "═"*50)
-    print("  🖥  LocalComputer — starting up")
+    print("  🖥  Locus - starting up")
     print("═"*50)
 
     git_pull()

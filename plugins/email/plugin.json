@@ -1,0 +1,19 @@
+{
+  "id": "email",
+  "name": "Email",
+  "version": "0.1.0",
+  "description": "Email connector contract for local IMAP/SMTP or browser-backed mail workflows.",
+  "enabled": true,
+  "connector": {
+    "type": "email",
+    "env": ["LOCAL_COMPUTER_EMAIL", "IMAP_HOST", "SMTP_HOST"],
+    "browser_urls": ["https://mail.google.com", "https://outlook.office.com/mail/"]
+  },
+  "keywords": ["email", "mail", "gmail", "outlook", "inbox", "send"],
+  "capabilities": ["connector_status", "draft_email", "search_mail"],
+  "tools": [
+    {"name": "connector_status", "risk": "read", "description": "Report email connector availability."},
+    {"name": "draft_email", "risk": "external_write", "description": "Prepare a draft for explicit user approval."},
+    {"name": "search_mail", "risk": "network", "description": "Search mail when credentials or browser session are configured."}
+  ]
+}

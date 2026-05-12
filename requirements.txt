@@ -2,3 +2,5 @@ httpx>=0.27
 playwright>=1.43
 flask>=3.0
 flask-cors>=4.0
+websockets>=12.0
+psutil>=5.9

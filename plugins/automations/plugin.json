@@ -1,0 +1,16 @@
+{
+  "id": "automations",
+  "name": "Automations",
+  "version": "0.1.0",
+  "description": "Create, list, update, and delete local scheduled Locus tasks without any cloud service.",
+  "enabled": true,
+  "keywords": ["automation", "automations", "schedule", "scheduled", "recurring", "reminder", "monitor"],
+  "capabilities": ["list_automations", "create_automation", "update_automation", "delete_automation", "run_due_automations"],
+  "tools": [
+    {"name": "list_automations", "risk": "read", "description": "List local automations stored on this Mac."},
+    {"name": "create_automation", "risk": "write", "description": "Create a local scheduled Locus task definition."},
+    {"name": "update_automation", "risk": "write", "description": "Update a local scheduled Locus task definition."},
+    {"name": "delete_automation", "risk": "write", "description": "Delete a local scheduled Locus task definition."},
+    {"name": "run_due_automations", "risk": "execute", "description": "Run due local automations on this Mac."}
+  ]
+}
