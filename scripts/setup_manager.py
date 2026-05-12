@@ -141,7 +141,18 @@ from playwright.sync_api import sync_playwright
 with sync_playwright() as p:
     raise SystemExit(0 if Path(p.chromium.executable_path).exists() else 1)
 """.strip()
-    return subprocess.run([str(python), "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    try:
+        return (
+            subprocess.run(
+                [str(python), "-c", code],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+            ).returncode
+            == 0
+        )
+    except subprocess.TimeoutExpired:
+        return False
 
 
 def _load_state() -> dict[str, Any]:
