@@ -53,6 +53,19 @@ SETUP_LOCK = asyncio.Lock()
 LAST_RESULT: dict[str, Any] = {}
 
 
+def _ci_mode() -> bool:
+    return os.getenv("CI", "").strip().lower() in {"1", "true", "yes"} or os.getenv(
+        "GITHUB_ACTIONS", ""
+    ).strip().lower() == "true"
+
+
+async def _setup_status(running: bool | None = None) -> dict[str, Any]:
+    status = await asyncio.to_thread(setup_status, lightweight=_ci_mode())
+    if running is not None:
+        status = {**status, "running": running}
+    return status
+
+
 def _safety_summary() -> dict[str, Any]:
     runtime = runtime_summary()
     budget = resource_budget()
@@ -292,7 +305,7 @@ async def _send_conversation_snapshot(ws: WebSocketServerProtocol | None = None)
 
 
 async def _send_setup_status(ws: WebSocketServerProtocol) -> None:
-    await ws.send(json.dumps({"type": "setup_status", "data": setup_status()}, ensure_ascii=False))
+    await ws.send(json.dumps({"type": "setup_status", "data": await _setup_status()}, ensure_ascii=False))
 
 
 async def _run_setup_flow() -> None:
@@ -310,7 +323,7 @@ async def _run_setup_flow() -> None:
             )
             future.result(timeout=10)
 
-        await _broadcast({"type": "setup_status", "data": {**setup_status(), "running": True}})
+        await _broadcast({"type": "setup_status", "data": await _setup_status(running=True)})
         try:
             status = await asyncio.to_thread(run_app_setup, emit)
             await _broadcast({"type": "setup_done", "data": status})
@@ -318,7 +331,7 @@ async def _run_setup_flow() -> None:
         except Exception as exc:
             logging.exception("Setup failed")
             await _broadcast({"type": "setup_error", "data": {"error": str(exc)}})
-            await _broadcast({"type": "setup_status", "data": {**setup_status(), "running": False}})
+            await _broadcast({"type": "setup_status", "data": await _setup_status(running=False)})
 
 
 async def _run_query(
@@ -885,7 +898,7 @@ async def _process_request(path: str, request_headers):
         )
 
     if request_path == "/api/setup":
-        payload = json.dumps(await asyncio.to_thread(setup_status)).encode("utf-8")
+        payload = json.dumps(await _setup_status()).encode("utf-8")
         return (
             HTTPStatus.OK,
             [

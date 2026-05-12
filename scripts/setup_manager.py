@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -699,27 +700,40 @@ def _install_recommended_models(emit: EventHandler | None, recommendation: dict[
     _emit(emit, "model_downloads", "Model Downloads", "done", f"installed {len(models)} recommended model(s)")
 
 
-def setup_status() -> dict[str, Any]:
+def setup_status(lightweight: bool = False) -> dict[str, Any]:
     """Return current setup status without installing anything."""
     os_profile = detect_os()
     current_python = Path(sys.executable)
     setup_python = _venv_python() if _venv_python().exists() else current_python
-    missing = _missing_modules(setup_python)
-    chromium_ready = False if missing else _playwright_chromium_ready(setup_python)
+    missing = [] if lightweight else _missing_modules(setup_python)
+    chromium_ready = True if lightweight else False if missing else _playwright_chromium_ready(setup_python)
     model_recommendation = ROOT / "configs" / "models.recommended.json"
     state = _load_state()
     from scripts.resource_policy import resource_budget
 
-    budget = resource_budget()
+    budget = (
+        SimpleNamespace(gpu_limit_pct=90.0, max_ram_gb=8.0, low_ram_mode=False, pressure_adjusted=False)
+        if lightweight
+        else resource_budget()
+    )
     recommendation: dict[str, Any] | None = None
-    try:
-        from scripts.model_selector import recommend_models
+    if not lightweight:
+        try:
+            from scripts.model_selector import recommend_models
 
-        recommendation = recommend_models()
-    except Exception:
-        recommendation = None
-    full_disk = full_disk_access_status()
-    accessibility = accessibility_status()
+            recommendation = recommend_models()
+        except Exception:
+            recommendation = None
+    full_disk = (
+        {"state": "warning", "detail": "deferred during CI dashboard smoke", "action": "open_full_disk_access"}
+        if lightweight and os_profile.family == "macos"
+        else full_disk_access_status()
+    )
+    accessibility = (
+        {"state": "warning", "detail": "deferred during CI dashboard smoke", "action": "open_accessibility"}
+        if lightweight and os_profile.family == "macos"
+        else accessibility_status()
+    )
     ollama_available = bool(shutil.which("ollama"))
     model_downloads = _model_download_status(recommendation)
     ollama_required = bool(model_downloads.get("required"))
@@ -732,16 +746,17 @@ def setup_status() -> dict[str, Any]:
     try:
         from scripts.plugin_runtime import execute_tool
 
-        diagnostics = execute_tool("workspace", "plugin_diagnostics", {})
-        summary = diagnostics.get("summary", {}) if isinstance(diagnostics, dict) else {}
-        declared = int(summary.get("declared_tools", 0) or 0)
-        implemented = int(summary.get("implemented_declared_tools", 0) or 0)
-        pending = int(summary.get("pending_declared_tools", 0) or 0)
-        plugins = int(summary.get("plugins", 0) or 0)
-        if declared:
-            plugin_state = "done" if pending == 0 else "warning"
-            plugin_detail = f"{implemented}/{declared} tools ready across {plugins} plugins"
-            plugin_action = "none" if pending == 0 else "Open Plugin Center"
+        if not lightweight:
+            diagnostics = execute_tool("workspace", "plugin_diagnostics", {})
+            summary = diagnostics.get("summary", {}) if isinstance(diagnostics, dict) else {}
+            declared = int(summary.get("declared_tools", 0) or 0)
+            implemented = int(summary.get("implemented_declared_tools", 0) or 0)
+            pending = int(summary.get("pending_declared_tools", 0) or 0)
+            plugins = int(summary.get("plugins", 0) or 0)
+            if declared:
+                plugin_state = "done" if pending == 0 else "warning"
+                plugin_detail = f"{implemented}/{declared} tools ready across {plugins} plugins"
+                plugin_action = "none" if pending == 0 else "Open Plugin Center"
     except Exception as exc:
         plugin_state = "warning"
         plugin_detail = f"could not run plugin diagnostics: {exc}"
