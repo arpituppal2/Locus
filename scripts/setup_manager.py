@@ -38,6 +38,13 @@ REQUIRED_MODULES = {
     "websockets": "websockets",
     "psutil": "psutil",
 }
+if OS_PROFILE.family == "macos":
+    REQUIRED_MODULES.update(
+        {
+            "pyobjc_cocoa": "AppKit",
+            "pyobjc_webkit": "WebKit",
+        }
+    )
 
 LOCAL_DIRS = [
     ROOT / "outputs",

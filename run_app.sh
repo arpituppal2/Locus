@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# run_app.sh  —  Launch Locus as a native macOS window.
-# This is called by the .app bundle in your Dock.
+# run_app.sh  —  Launch Locus as a native macOS menu-bar overlay.
+# This is called by the .app bundle in ~/Applications.
 # It activates the venv, starts the dashboard server,
-# then opens the UI in a dedicated frameless WebKit window via Python.
+# then opens the UI in a floating WebKit panel via Python.
 set -e
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,88 +54,5 @@ for i in $(seq 1 10); do
   sleep 0.5
 done
 
-# ── 4. Open the dashboard in a native macOS WebKit window ──────────────────
-# Uses PyObjC (ships with macOS Python) to create a frameless WKWebView app.
-"$VENV/bin/python" - <<'PYAPP'
-import sys, os, threading, time
-
-try:
-    import AppKit
-    import WebKit
-    import objc
-except ImportError:
-    # PyObjC not in venv — fall back to opening in the default browser
-    import webbrowser
-    webbrowser.open("http://localhost:8765")
-    # Keep the server alive
-    import time
-    while True:
-        time.sleep(60)
-
-import AppKit, WebKit, objc
-from Foundation import NSURL, NSURLRequest
-
-DASH_URL = "http://localhost:8765"
-
-class AppDelegate(AppKit.NSObject):
-    def applicationDidFinishLaunching_(self, note):
-        # Window
-        style = (
-            AppKit.NSWindowStyleMaskTitled
-            | AppKit.NSWindowStyleMaskClosable
-            | AppKit.NSWindowStyleMaskMiniaturizable
-            | AppKit.NSWindowStyleMaskResizable
-        )
-        rect = AppKit.NSMakeRect(100, 100, 1280, 820)
-        win = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            rect, style,
-            AppKit.NSBackingStoreBuffered, False
-        )
-        win.setTitle_("Locus")
-        win.setMinSize_(AppKit.NSMakeSize(800, 500))
-
-        # WKWebView
-        cfg = WebKit.WKWebViewConfiguration.alloc().init()
-        wv = WebKit.WKWebView.alloc().initWithFrame_configuration_(
-            win.contentView().bounds(), cfg
-        )
-        wv.setAutoresizingMask_(
-            AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable
-        )
-        win.contentView().addSubview_(wv)
-
-        url  = NSURL.URLWithString_(DASH_URL)
-        req  = NSURLRequest.requestWithURL_(url)
-        wv.loadRequest_(req)
-
-        win.makeKeyAndOrderFront_(None)
-        self._win = win
-        self._wv  = wv
-        self._monitor = AppKit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
-            AppKit.NSEventMaskKeyDown,
-            self.handleKeyEvent_
-        )
-
-    def handleKeyEvent_(self, event):
-        # Option+Space focuses Locus while the app is active. A fully global
-        # shortcut requires macOS Accessibility approval and a signed bundle.
-        if event.keyCode() == 49 and (event.modifierFlags() & AppKit.NSEventModifierFlagOption):
-            self._win.makeKeyAndOrderFront_(None)
-            AppKit.NSApp.activateIgnoringOtherApps_(True)
-            self._wv.evaluateJavaScript_completionHandler_(
-                "if (window.openLocusCommandPalette) { window.openLocusCommandPalette(document.querySelector('#queryInput')?.value || ''); } else { document.querySelector('#queryInput')?.focus(); document.querySelector('#queryInput')?.select(); }",
-                None
-            )
-            return None
-        return event
-
-    def applicationShouldTerminateAfterLastWindowClosed_(self, app):
-        return True
-
-app  = AppKit.NSApplication.sharedApplication()
-del_ = AppDelegate.alloc().init()
-app.setDelegate_(del_)
-app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
-app.activateIgnoringOtherApps_(True)
-app.run()
-PYAPP
+# ── 4. Open the native menu-bar overlay ────────────────────────────────────
+"$VENV/bin/python" "$DIR/scripts/locus_macos_app.py"

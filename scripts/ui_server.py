@@ -202,6 +202,41 @@ def _safety_summary() -> dict[str, Any]:
     }
 
 
+def _voice_recommendation() -> dict[str, Any]:
+    budget = resource_budget()
+    total_ram = float(getattr(budget, "total_ram_gb", 0) or 0)
+    max_ram = float(getattr(budget, "max_ram_gb", 0) or 0)
+    low_ram = bool(getattr(budget, "low_ram_mode", False) or max_ram <= 8.5 or total_ram <= 8.5)
+    if low_ram:
+        stt_model = "whisper.cpp tiny.en"
+        stt_ram = 0.35
+        notes = "8 GB mode: use push-to-talk, tiny transcription, and system voices."
+    elif max_ram <= 20:
+        stt_model = "whisper.cpp base.en"
+        stt_ram = 0.75
+        notes = "Balanced mode: base transcription with one local task at a time."
+    else:
+        stt_model = "whisper.cpp small.en"
+        stt_ram = 1.8
+        notes = "High-memory mode: small transcription is acceptable when the user enables models."
+    return {
+        "enabled_by_default": False,
+        "status": "preview",
+        "transcription": {
+            "recommended_model": stt_model,
+            "estimated_ram_gb": stt_ram,
+            "runs_only_when_enabled": True,
+        },
+        "speech": {
+            "recommended_engine": "macOS system voice",
+            "estimated_ram_gb": 0.15,
+            "runs_only_when_voice_mode_is_active": True,
+        },
+        "resource_budget": asdict(budget),
+        "notes": notes,
+    }
+
+
 async def _send_tool_audit(ws: WebSocketServerProtocol | None = None, *, limit: int = 12) -> None:
     payload = {"type": "tool_audit", "data": {"events": list_tool_events(limit=limit)}}
     if ws is None:
@@ -623,7 +658,9 @@ async def _process_request(path: str, request_headers):
     if str(request_headers.get("Upgrade", "")).lower() == "websocket":
         return None
 
-    if path in ("/", "/index.html"):
+    request_path = path.split("?", 1)[0] or "/"
+
+    if request_path in ("/", "/index.html"):
         if DASHBOARD_HTML.exists():
             body = DASHBOARD_HTML.read_bytes()
             return (
@@ -641,8 +678,8 @@ async def _process_request(path: str, request_headers):
             body,
         )
 
-    if path.startswith("/assets/"):
-        target = (ROOT / unquote(path.lstrip("/"))).resolve()
+    if request_path.startswith("/assets/"):
+        target = (ROOT / unquote(request_path.lstrip("/"))).resolve()
         try:
             target.relative_to(ASSETS_DIR)
         except ValueError:
@@ -666,7 +703,7 @@ async def _process_request(path: str, request_headers):
             body,
         )
 
-    if path == "/api/ping":
+    if request_path == "/api/ping":
         body = json.dumps({"ok": True, "runtime": runtime_summary()}).encode("utf-8")
         return (
             HTTPStatus.OK,
@@ -677,7 +714,7 @@ async def _process_request(path: str, request_headers):
             body,
         )
 
-    if path == "/api/runtime":
+    if request_path == "/api/runtime":
         payload = json.dumps({"runtime": runtime_summary(), "resource_budget": asdict(resource_budget())}).encode("utf-8")
         return (
             HTTPStatus.OK,
@@ -688,7 +725,7 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/safety":
+    if request_path == "/api/safety":
         payload = json.dumps(_safety_summary()).encode("utf-8")
         return (
             HTTPStatus.OK,
@@ -699,7 +736,7 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/setup":
+    if request_path == "/api/setup":
         payload = json.dumps(setup_status()).encode("utf-8")
         return (
             HTTPStatus.OK,
@@ -710,7 +747,7 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/permissions":
+    if request_path == "/api/permissions":
         payload = json.dumps(
             {
                 "full_disk_access": full_disk_access_status(),
@@ -726,7 +763,7 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/plugins":
+    if request_path == "/api/plugins":
         payload = json.dumps(registry_snapshot()).encode("utf-8")
         return (
             HTTPStatus.OK,
@@ -737,7 +774,7 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/tools":
+    if request_path == "/api/tools":
         payload = json.dumps(tool_catalog()).encode("utf-8")
         return (
             HTTPStatus.OK,
@@ -748,7 +785,7 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/workspace/index":
+    if request_path == "/api/workspace/index":
         index = load_cached_index()
         if index is None:
             index = build_workspace_index(write_cache=True)
@@ -762,7 +799,7 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/runs":
+    if request_path == "/api/runs":
         payload = json.dumps({"runs": list_runs(limit=20)}).encode("utf-8")
         return (
             HTTPStatus.OK,
@@ -773,7 +810,7 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/tool-audit":
+    if request_path == "/api/tool-audit":
         payload = json.dumps({"events": list_tool_events(limit=30)}).encode("utf-8")
         return (
             HTTPStatus.OK,
@@ -784,7 +821,7 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/models/recommendation":
+    if request_path == "/api/models/recommendation":
         payload = json.dumps(recommend_models()).encode("utf-8")
         return (
             HTTPStatus.OK,
@@ -795,7 +832,7 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/uploads":
+    if request_path == "/api/uploads":
         payload = json.dumps({"uploads": list_uploads()}).encode("utf-8")
         return (
             HTTPStatus.OK,
@@ -806,7 +843,18 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/automations":
+    if request_path == "/api/voice/recommendation":
+        payload = json.dumps(_voice_recommendation()).encode("utf-8")
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(payload))),
+            ],
+            payload,
+        )
+
+    if request_path == "/api/automations":
         from scripts.automation_store import list_automations
 
         payload = json.dumps({"automations": list_automations(limit=100)}).encode("utf-8")
@@ -819,7 +867,7 @@ async def _process_request(path: str, request_headers):
             payload,
         )
 
-    if path == "/api/memory":
+    if request_path == "/api/memory":
         try:
             from scripts.long_term_memory import list_recent_queries
 

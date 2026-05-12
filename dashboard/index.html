@@ -10,37 +10,37 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     :root {
-      --color-bg: #100718;
-      --color-surface: #171024;
-      --color-surface-2: #241533;
-      --color-border: #47305f;
-      --color-text: #fbf5ff;
-      --color-muted: #b5a4c8;
-      --color-primary: #c084fc;
-      --color-primary-2: #f0abfc;
-      --color-accent: #a78bfa;
-      --color-ambient: rgba(192, 132, 252, 0.34);
-      --color-success: #8bdc97;
-      --color-warning: #f5c56b;
-      --color-error: #ef7b91;
+      --color-bg: #0f1110;
+      --color-surface: #20231f;
+      --color-surface-2: #31362f;
+      --color-border: rgba(255, 255, 255, 0.18);
+      --color-text: #f7f7f2;
+      --color-muted: #b8bbb3;
+      --color-primary: #77d7cf;
+      --color-primary-2: #edf6ef;
+      --color-accent: #f5c783;
+      --color-ambient: rgba(150, 177, 162, 0.32);
+      --color-success: #93d6a0;
+      --color-warning: #f6ca86;
+      --color-error: #ee8e84;
       --sidebar-left: 260px;
       --sidebar-right: 320px;
     }
 
     [data-theme="light"] {
-      --color-bg: #fbf7ff;
-      --color-surface: #ffffff;
-      --color-surface-2: #f3eafd;
-      --color-border: #d9c7ee;
-      --color-text: #21112f;
-      --color-muted: #786487;
-      --color-primary: #8b5cf6;
-      --color-primary-2: #c026d3;
-      --color-accent: #7c3aed;
-      --color-ambient: rgba(139, 92, 246, 0.2);
-      --color-success: #3b8f57;
-      --color-warning: #a66b18;
-      --color-error: #b74d68;
+      --color-bg: #f3f1ea;
+      --color-surface: #fdfcf8;
+      --color-surface-2: #e7e6df;
+      --color-border: rgba(22, 24, 22, 0.14);
+      --color-text: #171916;
+      --color-muted: #6f746d;
+      --color-primary: #2d8580;
+      --color-primary-2: #29322d;
+      --color-accent: #af7a38;
+      --color-ambient: rgba(113, 130, 116, 0.22);
+      --color-success: #3f8d52;
+      --color-warning: #a97228;
+      --color-error: #b9574e;
     }
 
     * { box-sizing: border-box; }
@@ -147,10 +147,10 @@
       stroke-linejoin: round;
     }
 
-    .brand-mark .petal-center { fill: #f3d3ff; }
-    .brand-mark .petal-mid { fill: #d8b4fe; }
-    .brand-mark .petal-side { fill: #c084fc; }
-    .brand-mark .petal-low { fill: #a78bfa; }
+    .brand-mark .petal-center { fill: #eef3e9; }
+    .brand-mark .petal-mid { fill: #cbd8cf; }
+    .brand-mark .petal-side { fill: #aebfb5; }
+    .brand-mark .petal-low { fill: #8fa39a; }
 
     .brand-mark .lotus-core {
       fill: #fff7b8;
@@ -2155,10 +2155,719 @@
         gap: 3px;
       }
     }
+
+    body {
+      background:
+        radial-gradient(circle at 50% -8%, rgba(236, 242, 232, 0.16), transparent 34%),
+        radial-gradient(circle at 80% 12%, rgba(135, 160, 145, 0.18), transparent 28%),
+        linear-gradient(145deg, #0f1110 0%, #171a16 42%, #0c0d0c 100%);
+    }
+
+    body::before {
+      background:
+        linear-gradient(128deg, transparent 0%, rgba(221, 231, 220, 0.08) 38%, transparent 68%),
+        radial-gradient(ellipse at 52% 16%, rgba(190, 204, 188, 0.18), transparent 42%);
+      opacity: 0.9;
+      animation: systemVeil 16s ease-in-out infinite;
+    }
+
+    body::after {
+      inset: auto -12% -18%;
+      height: 56vh;
+      background:
+        radial-gradient(ellipse at 42% 48%, rgba(141, 164, 149, 0.22), transparent 42%),
+        radial-gradient(ellipse at 64% 58%, rgba(246, 202, 134, 0.12), transparent 38%);
+      filter: blur(32px);
+      opacity: 0.7;
+      animation: systemGlow 12s ease-in-out infinite;
+    }
+
+    body.surface-overlay,
+    body.surface-launch {
+      background: transparent;
+    }
+
+    body.surface-launch {
+      overflow: hidden;
+    }
+
+    body.surface-launch .app,
+    body.surface-launch .offline-banner,
+    body.surface-launch .command-palette,
+    body.surface-launch .plugin-center,
+    body.surface-launch .safety-center,
+    body.surface-launch .settings-center,
+    body.surface-launch .tool-approval {
+      display: none !important;
+    }
+
+    .app {
+      grid-template-rows: 52px 1fr;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(248, 250, 244, 0.08), transparent 34%),
+        transparent;
+    }
+
+    .header {
+      margin: 10px auto 0;
+      width: min(1240px, calc(100% - 28px));
+      height: 42px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 999px;
+      background: rgba(26, 28, 25, 0.58);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.12),
+        0 24px 60px rgba(0, 0, 0, 0.18);
+    }
+
+    .brand-mark {
+      filter: drop-shadow(0 0 14px rgba(237, 246, 239, 0.2));
+    }
+
+    .brand-mark .petal { stroke: rgba(255, 255, 255, 0.72); }
+    .brand-mark .petal-center { fill: #eef3e9; }
+    .brand-mark .petal-mid { fill: #cbd8cf; }
+    .brand-mark .petal-side { fill: #aebfb5; }
+    .brand-mark .petal-low { fill: #8fa39a; }
+    .brand-mark .lotus-core { fill: #f7d495; }
+    .brand-mark .lotus-stem { stroke: #d7eee8; }
+    .brand-mark .lotus-water { stroke: #9bb3aa; }
+
+    .theme-btn,
+    .mini-action,
+    .quick-action,
+    .upload-btn,
+    .ram-save,
+    .plan-btn,
+    .send-btn,
+    .setup-run,
+    .setup-secondary,
+    .command-close,
+    .approval-button {
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.04)),
+        rgba(255, 255, 255, 0.06);
+      color: var(--color-text);
+      border-radius: 999px;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        inset 0 -12px 18px rgba(0, 0, 0, 0.08),
+        0 10px 22px rgba(0, 0, 0, 0.16);
+      backdrop-filter: blur(18px) saturate(135%);
+      -webkit-backdrop-filter: blur(18px) saturate(135%);
+    }
+
+    .theme-btn:hover,
+    .mini-action:hover,
+    .quick-action:hover,
+    .upload-btn:hover,
+    .ram-save:hover,
+    .plan-btn:hover,
+    .send-btn:hover,
+    .setup-run:hover,
+    .setup-secondary:hover,
+    .command-close:hover,
+    .approval-button:hover {
+      border-color: rgba(237, 246, 239, 0.42);
+      transform: translateY(-1px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.24),
+        inset 0 -12px 18px rgba(0, 0, 0, 0.08),
+        0 18px 34px rgba(0, 0, 0, 0.22);
+    }
+
+    .layout {
+      width: min(1320px, 100%);
+      margin: 0 auto;
+      padding: 30px 28px 34px;
+      gap: 20px;
+      grid-template-columns: 286px minmax(0, 1fr) 286px;
+    }
+
+    .panel,
+    .workspace-console,
+    .query-wrap,
+    .thinking,
+    .tool-log,
+    .answer,
+    .command-card,
+    .plugin-window,
+    .safety-window,
+    .settings-window,
+    .approval-card {
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.035)),
+        rgba(32, 36, 32, 0.46);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.12),
+        0 30px 90px rgba(0, 0, 0, 0.24);
+      backdrop-filter: blur(28px) saturate(135%);
+      -webkit-backdrop-filter: blur(28px) saturate(135%);
+    }
+
+    .panel {
+      border-radius: 26px;
+    }
+
+    .workspace-console {
+      border-radius: 30px;
+      padding: 28px;
+      overflow: hidden;
+    }
+
+    .console-kicker,
+    .panel-title,
+    .safety-section-title,
+    .setup-group-title {
+      color: rgba(237, 246, 239, 0.68);
+      letter-spacing: 0.16em;
+    }
+
+    .console-title {
+      max-width: 780px;
+      font-family: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
+      font-weight: 500;
+      font-size: clamp(42px, 5.2vw, 76px);
+      line-height: 0.96;
+      letter-spacing: 0;
+      color: #fbfbf6;
+    }
+
+    .console-subtitle,
+    .row-meta,
+    .compact-list,
+    .query-hint {
+      color: rgba(247, 247, 242, 0.62);
+    }
+
+    .console-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .console-card,
+    .plugin-card,
+    .safety-card,
+    .wizard-step,
+    .setup-step {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03)),
+        rgba(255, 255, 255, 0.035);
+      border-radius: 18px;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.12),
+        0 12px 28px rgba(0, 0, 0, 0.14);
+    }
+
+    .quick-actions {
+      gap: 10px;
+    }
+
+    .query-wrap {
+      position: relative;
+      padding: 14px;
+      border-radius: 36px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.045)),
+        rgba(36, 40, 36, 0.62);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        inset 0 -24px 46px rgba(0, 0, 0, 0.12),
+        0 34px 120px rgba(0, 0, 0, 0.32);
+    }
+
+    .query-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 70px;
+      padding: 8px 10px 8px 18px;
+      border-radius: 999px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(232, 234, 228, 0.86));
+      color: #111411;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.86),
+        inset 0 -18px 28px rgba(0, 0, 0, 0.055),
+        0 14px 26px rgba(0, 0, 0, 0.22);
+    }
+
+    .prompt-glyph {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      color: #171916;
+    }
+
+    .query-input {
+      min-height: 52px;
+      border: 0;
+      background: transparent;
+      color: #242824;
+      font-size: clamp(23px, 3.4vw, 42px);
+      font-weight: 520;
+      letter-spacing: 0;
+      outline: 0;
+      box-shadow: none;
+    }
+
+    .query-input::placeholder {
+      color: rgba(30, 34, 30, 0.42);
+    }
+
+    .plan-btn,
+    .send-btn {
+      min-height: 46px;
+      padding: 0 18px;
+      color: #f7f7f2;
+      background:
+        linear-gradient(180deg, rgba(59, 66, 58, 0.96), rgba(34, 38, 34, 0.96));
+    }
+
+    .plan-btn.active,
+    .send-btn {
+      border-color: rgba(245, 199, 131, 0.34);
+      color: #fff7e4;
+    }
+
+    .taskbar-tools {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 16px 0 6px;
+    }
+
+    .task-tool {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 15px;
+      color: rgba(247, 247, 242, 0.92);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04)),
+        rgba(255, 255, 255, 0.05);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.16),
+        inset 0 -12px 18px rgba(0, 0, 0, 0.12),
+        0 12px 24px rgba(0, 0, 0, 0.16);
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    .task-tool:hover,
+    .task-tool.active {
+      transform: translateY(-2px);
+      border-color: rgba(237, 246, 239, 0.42);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.22),
+        inset 0 -12px 18px rgba(0, 0, 0, 0.1),
+        0 20px 36px rgba(0, 0, 0, 0.24);
+    }
+
+    .task-tool svg,
+    .prompt-glyph svg,
+    .voice-icon svg {
+      width: 25px;
+      height: 25px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .tool-divider {
+      width: 1px;
+      height: 30px;
+      background: rgba(255, 255, 255, 0.12);
+      margin: 0 2px;
+    }
+
+    .voice-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 70;
+      display: none;
+      place-items: center;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 50% 44%, rgba(245, 199, 131, 0.16), transparent 30%),
+        rgba(10, 12, 10, 0.18);
+      backdrop-filter: blur(18px) saturate(122%);
+      -webkit-backdrop-filter: blur(18px) saturate(122%);
+    }
+
+    .voice-overlay.show {
+      display: grid;
+    }
+
+    .voice-pill {
+      width: min(720px, calc(100vw - 44px));
+      min-height: 132px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 28px;
+      align-items: center;
+      padding: 24px 34px;
+      border-radius: 999px;
+      background:
+        linear-gradient(180deg, rgba(106, 78, 56, 0.9), rgba(72, 54, 42, 0.9));
+      color: #fff8eb;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        inset 0 -28px 42px rgba(0, 0, 0, 0.16),
+        0 34px 120px rgba(0, 0, 0, 0.42);
+      pointer-events: auto;
+    }
+
+    .voice-status {
+      font-size: clamp(28px, 4.4vw, 52px);
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .voice-note {
+      margin-top: 4px;
+      color: rgba(255, 248, 235, 0.58);
+      font-size: 13px;
+    }
+
+    .voice-meter {
+      display: grid;
+      grid-template-columns: repeat(14, 9px);
+      gap: 8px;
+      align-items: center;
+    }
+
+    .voice-meter span {
+      width: 9px;
+      height: 9px;
+      border-radius: 99px;
+      background: rgba(255, 216, 160, 0.34);
+      animation: voiceDot 1100ms ease-in-out infinite;
+    }
+
+    .voice-meter span:nth-child(2n) { animation-delay: 90ms; }
+    .voice-meter span:nth-child(3n) { animation-delay: 160ms; }
+    .voice-meter span:nth-child(4n) { animation-delay: 240ms; }
+
+    .voice-stop {
+      width: 44px;
+      height: 44px;
+      border: 0;
+      border-radius: 14px;
+      background: #f6c986;
+      box-shadow: inset 0 -8px 14px rgba(0, 0, 0, 0.12), 0 12px 24px rgba(0, 0, 0, 0.22);
+      cursor: pointer;
+    }
+
+    .launch-veil {
+      position: fixed;
+      inset: 0;
+      z-index: 90;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 50% 42%, rgba(238, 246, 239, 0.18), transparent 24%),
+        radial-gradient(circle at 52% 58%, rgba(112, 134, 120, 0.26), transparent 34%),
+        rgba(11, 13, 11, 0.62);
+      backdrop-filter: blur(30px) saturate(126%);
+      -webkit-backdrop-filter: blur(30px) saturate(126%);
+      animation: launchOut 2600ms ease forwards;
+    }
+
+    body.surface-launch .launch-veil {
+      animation: none;
+    }
+
+    .launch-core {
+      position: relative;
+      width: min(680px, 82vw);
+      aspect-ratio: 1.65;
+      display: grid;
+      place-items: center;
+      text-align: center;
+    }
+
+    .launch-core::before,
+    .launch-core::after {
+      content: "";
+      position: absolute;
+      inset: 8%;
+      border-radius: 999px;
+      background:
+        radial-gradient(circle, rgba(237, 246, 239, 0.3), transparent 38%),
+        conic-gradient(from 90deg, transparent, rgba(237, 246, 239, 0.18), transparent, rgba(245, 199, 131, 0.12), transparent);
+      filter: blur(20px);
+      animation: launchBloom 2200ms ease-in-out infinite;
+    }
+
+    .launch-core::after {
+      inset: 22%;
+      filter: blur(34px);
+      opacity: 0.6;
+      animation-delay: 160ms;
+    }
+
+    .launch-copy {
+      position: relative;
+      z-index: 1;
+    }
+
+    .launch-logo {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 18px;
+      color: rgba(247, 247, 242, 0.92);
+      filter: drop-shadow(0 0 26px rgba(237, 246, 239, 0.34));
+    }
+
+    .launch-title {
+      font-family: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
+      font-size: clamp(46px, 7vw, 94px);
+      line-height: 0.92;
+      font-weight: 500;
+      color: #fffffb;
+      text-shadow: 0 0 44px rgba(237, 246, 239, 0.3);
+    }
+
+    .launch-subtitle {
+      margin-top: 16px;
+      color: rgba(247, 247, 242, 0.68);
+      font-size: clamp(16px, 2vw, 22px);
+    }
+
+    .setup-panel {
+      background:
+        radial-gradient(circle at 50% 56%, rgba(237, 246, 239, 0.16), transparent 34%),
+        rgba(9, 11, 9, 0.28);
+    }
+
+    .setup-title {
+      font-family: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
+      color: #fffffb;
+    }
+
+    .command-palette,
+    .plugin-center,
+    .safety-center,
+    .settings-center,
+    .tool-approval {
+      background: rgba(10, 12, 10, 0.18);
+      backdrop-filter: blur(18px) saturate(128%);
+      -webkit-backdrop-filter: blur(18px) saturate(128%);
+    }
+
+    .command-card,
+    .plugin-window,
+    .safety-window,
+    .settings-window,
+    .approval-card {
+      border-radius: 30px;
+    }
+
+    .command-input {
+      border-radius: 999px;
+      background: rgba(244, 245, 240, 0.9);
+      color: #171916;
+      font-size: 22px;
+    }
+
+    .command-item {
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.045);
+    }
+
+    .command-item:hover,
+    .command-item.active {
+      background: rgba(255, 255, 255, 0.11);
+    }
+
+    .command-icon {
+      border-radius: 14px;
+      color: #f7f7f2;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.04)),
+        rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 10px 20px rgba(0, 0, 0, 0.18);
+    }
+
+    body.surface-overlay .header,
+    body.surface-overlay .side-panel,
+    body.surface-overlay .right-panel,
+    body.surface-overlay .workspace-console,
+    body.surface-overlay .resource-warning {
+      display: none;
+    }
+
+    body.surface-overlay .app {
+      min-height: 100vh;
+      grid-template-rows: 1fr;
+      background: transparent;
+    }
+
+    body.surface-overlay .layout {
+      min-height: 100vh;
+      width: 100%;
+      padding: 42px;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: center;
+    }
+
+    body.surface-overlay[data-placement="top"] .layout {
+      align-items: start;
+      padding-top: 76px;
+    }
+
+    body.surface-overlay[data-placement="bottom"] .layout {
+      align-items: end;
+      padding-bottom: 76px;
+    }
+
+    body.surface-overlay .main {
+      width: min(1040px, 100%);
+      margin: 0 auto;
+      display: grid;
+      gap: 18px;
+    }
+
+    body.surface-overlay .query-wrap {
+      order: 0;
+    }
+
+    body.surface-overlay .thinking,
+    body.surface-overlay .tool-log {
+      display: none;
+    }
+
+    body.surface-overlay .answer {
+      max-height: 280px;
+      overflow: auto;
+      border-radius: 28px;
+    }
+
+    body.surface-overlay .shortcut-toast {
+      top: auto;
+      bottom: 24px;
+    }
+
+    @media (max-width: 980px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .side-panel,
+      .right-panel {
+        display: none;
+      }
+
+      .console-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 720px) {
+      .header {
+        width: calc(100% - 18px);
+        padding: 0 12px;
+      }
+
+      .header-actions {
+        gap: 6px;
+      }
+
+      .theme-btn:not(.command-btn),
+      .status-wrap {
+        display: none;
+      }
+
+      .layout,
+      body.surface-overlay .layout {
+        padding: 18px;
+      }
+
+      .console-title {
+        font-size: 44px;
+      }
+
+      .query-row {
+        grid-template-columns: auto minmax(0, 1fr);
+        border-radius: 28px;
+      }
+
+      .query-row .plan-btn,
+      .query-row .send-btn,
+      .query-row .query-mini-action {
+        grid-row: 2;
+      }
+
+      .query-input {
+        font-size: 26px;
+      }
+
+      .taskbar-tools {
+        flex-wrap: wrap;
+      }
+
+      .voice-pill {
+        grid-template-columns: 1fr;
+        border-radius: 34px;
+      }
+    }
+
+    @keyframes systemVeil {
+      0%, 100% { opacity: 0.68; transform: translateX(-1%) scale(1); }
+      50% { opacity: 0.92; transform: translateX(1%) scale(1.025); }
+    }
+
+    @keyframes systemGlow {
+      0%, 100% { opacity: 0.46; transform: translateY(2%) scale(1); }
+      50% { opacity: 0.78; transform: translateY(-2%) scale(1.05); }
+    }
+
+    @keyframes voiceDot {
+      0%, 100% { transform: scale(0.78); opacity: 0.38; }
+      50% { transform: scale(1.32); opacity: 1; }
+    }
+
+    @keyframes launchBloom {
+      0%, 100% { transform: scale(0.94) rotate(-2deg); opacity: 0.58; }
+      50% { transform: scale(1.08) rotate(2deg); opacity: 0.94; }
+    }
+
+    @keyframes launchOut {
+      0%, 72% { opacity: 1; visibility: visible; }
+      100% { opacity: 0; visibility: hidden; }
+    }
   </style>
 </head>
 <body>
   <div id="offlineBanner" class="offline-banner">Agent offline — run ./run.sh to start</div>
+  <div id="launchVeil" class="launch-veil" aria-hidden="true">
+    <div class="launch-core">
+      <div class="launch-copy">
+        <svg class="launch-logo" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+          <path d="M16 44 C22 36 27 35 32 42 C37 35 42 36 48 44" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <path d="M32 12 C23 24 24 36 32 46 C40 36 41 24 32 12Z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M21 23 C16 34 19 42 32 47 C31 34 28 27 21 23Z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M43 23 C48 34 45 42 32 47 C33 34 36 27 43 23Z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
+          <circle cx="32" cy="44" r="4" fill="currentColor"/>
+        </svg>
+        <div class="launch-title">Locus is here</div>
+        <div class="launch-subtitle">One shortcut. Total context. Fully local.</div>
+      </div>
+    </div>
+  </div>
 
   <div class="app">
     <header class="header">
@@ -2166,9 +2875,9 @@
         <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
           <defs>
             <radialGradient id="lotusCoreGlow" cx="50%" cy="68%" r="50%">
-              <stop offset="0" stop-color="#fff7b8" stop-opacity="0.72"/>
-              <stop offset="0.55" stop-color="#f0abfc" stop-opacity="0.22"/>
-              <stop offset="1" stop-color="#c084fc" stop-opacity="0"/>
+              <stop offset="0" stop-color="#fff7b8" stop-opacity="0.7"/>
+              <stop offset="0.55" stop-color="#edf6ef" stop-opacity="0.24"/>
+              <stop offset="1" stop-color="#8fa39a" stop-opacity="0"/>
             </radialGradient>
           </defs>
           <ellipse cx="32" cy="38" rx="21" ry="19" fill="url(#lotusCoreGlow)"/>
@@ -2308,11 +3017,46 @@
 
         <div id="queryWrap" class="query-wrap">
           <div class="query-row">
+            <span class="prompt-glyph" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M7 19 C9.6 15.8 10.8 13 12 5 C13.2 13 14.4 15.8 17 19"/>
+                <path d="M5 13 H19"/>
+                <path d="M8 19 H16"/>
+              </svg>
+            </span>
             <input id="queryInput" class="query-input" type="text" placeholder="Ask this folder, run a local tool, or draft a plan..." autocomplete="off" />
+            <button id="createFileBtn" class="task-tool query-mini-action" type="button" aria-label="Create a file">
+              <svg viewBox="0 0 24 24"><path d="M14 3 H7 A2 2 0 0 0 5 5 V19 A2 2 0 0 0 7 21 H17 A2 2 0 0 0 19 19 V8 Z"/><path d="M14 3 V8 H19"/><path d="M9 14 H15"/><path d="M12 11 V17"/></svg>
+            </button>
+            <button id="modelMenuBtn" class="task-tool query-mini-action" type="button" aria-label="Open model selector">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2 V6"/><path d="M12 18 V22"/><path d="M2 12 H6"/><path d="M18 12 H22"/><path d="M4.9 4.9 L7.8 7.8"/><path d="M16.2 16.2 L19.1 19.1"/><path d="M19.1 4.9 L16.2 7.8"/><path d="M7.8 16.2 L4.9 19.1"/></svg>
+            </button>
             <button id="planModeBtn" class="plan-btn" type="button" aria-pressed="false">Plan</button>
             <button id="sendBtn" class="send-btn" aria-label="Run local request">Run</button>
           </div>
+          <div class="taskbar-tools" aria-label="Context tools">
+            <button id="appsContextBtn" class="task-tool" type="button" aria-label="App control">
+              <svg viewBox="0 0 24 24"><path d="M4 6 H20"/><path d="M4 12 H20"/><path d="M4 18 H20"/><path d="M7 3 V21"/><path d="M17 3 V21"/></svg>
+            </button>
+            <button id="folderBtn" class="task-tool" type="button" aria-label="Add a folder">
+              <svg viewBox="0 0 24 24"><path d="M3 7 A2 2 0 0 1 5 5 H9 L11 7 H19 A2 2 0 0 1 21 9 V18 A2 2 0 0 1 19 20 H5 A2 2 0 0 1 3 18 Z"/></svg>
+            </button>
+            <button id="imageBtn" class="task-tool" type="button" aria-label="Add images">
+              <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 15 L11 12 L14 15 L16 13 L20 17"/><circle cx="9" cy="9" r="1.4"/></svg>
+            </button>
+            <button id="filesBtn" class="task-tool" type="button" aria-label="Attach files">
+              <svg viewBox="0 0 24 24"><path d="M8 4 H15 L19 8 V20 H8 Z"/><path d="M15 4 V8 H19"/><path d="M5 7 V17"/></svg>
+            </button>
+            <button id="clipBtn" class="task-tool" type="button" aria-label="Attach file">
+              <svg viewBox="0 0 24 24"><path d="M21 11.5 L12.6 19.9 A6 6 0 0 1 4.1 11.4 L12.5 3 A4 4 0 1 1 18.2 8.7 L9.8 17.1 A2 2 0 0 1 7 14.2 L15.1 6.1"/></svg>
+            </button>
+            <span class="tool-divider" aria-hidden="true"></span>
+            <button id="voiceBtn" class="task-tool" type="button" aria-label="Start voice mode">
+              <svg viewBox="0 0 24 24"><path d="M12 3 V21"/><path d="M8 7 V17"/><path d="M16 7 V17"/><path d="M4 10 V14"/><path d="M20 10 V14"/></svg>
+            </button>
+          </div>
           <div id="queryHint" class="query-hint">Local models stay off unless you enable them.</div>
+          <input id="folderInput" type="file" multiple webkitdirectory hidden />
         </div>
 
         <div id="thinkingPanel" class="thinking">
@@ -2414,10 +3158,30 @@
           <div id="settingsModels" class="safety-line"></div>
         </div>
         <div class="safety-section">
+          <div class="safety-section-title">Overlay Placement</div>
+          <div id="placementControl" class="autonomy-control"></div>
+        </div>
+        <div class="safety-section">
           <div class="safety-section-title">Automations</div>
           <div id="settingsAutomations" class="safety-line"></div>
         </div>
       </div>
+    </div>
+  </div>
+  <div id="voiceOverlay" class="voice-overlay" aria-hidden="true">
+    <div class="voice-pill" role="dialog" aria-modal="true" aria-label="Voice mode">
+      <span class="voice-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 3 V15"/><path d="M8 7 V14"/><path d="M16 7 V14"/><path d="M5 10 V13"/><path d="M19 10 V13"/><path d="M8 20 H16"/></svg>
+      </span>
+      <div>
+        <div id="voiceStatus" class="voice-status">Listening...</div>
+        <div id="voiceNote" class="voice-note">Uses macOS speech when available. Local voice models stay off until enabled.</div>
+      </div>
+      <div class="voice-meter" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <button id="voiceStopBtn" class="voice-stop" type="button" aria-label="Stop voice mode"></button>
     </div>
   </div>
   <div id="toolApproval" class="tool-approval" aria-hidden="true">
@@ -2465,6 +3229,20 @@
     const uploadList = document.getElementById('uploadList');
     const uploadBtn = document.getElementById('uploadBtn');
     const fileInput = document.getElementById('fileInput');
+    const folderInput = document.getElementById('folderInput');
+    const folderBtn = document.getElementById('folderBtn');
+    const filesBtn = document.getElementById('filesBtn');
+    const imageBtn = document.getElementById('imageBtn');
+    const clipBtn = document.getElementById('clipBtn');
+    const appsContextBtn = document.getElementById('appsContextBtn');
+    const createFileBtn = document.getElementById('createFileBtn');
+    const modelMenuBtn = document.getElementById('modelMenuBtn');
+    const voiceBtn = document.getElementById('voiceBtn');
+    const voiceOverlay = document.getElementById('voiceOverlay');
+    const voiceStatus = document.getElementById('voiceStatus');
+    const voiceNote = document.getElementById('voiceNote');
+    const voiceStopBtn = document.getElementById('voiceStopBtn');
+    const launchVeil = document.getElementById('launchVeil');
     const toolLog = document.getElementById('toolLog');
     const workspaceList = document.getElementById('workspaceList');
     const runList = document.getElementById('runList');
@@ -2508,6 +3286,7 @@
     const settingsSummary = document.getElementById('settingsSummary');
     const settingsGrid = document.getElementById('settingsGrid');
     const settingsModels = document.getElementById('settingsModels');
+    const placementControl = document.getElementById('placementControl');
     const settingsAutomations = document.getElementById('settingsAutomations');
     const toolApproval = document.getElementById('toolApproval');
     const approvalToolName = document.getElementById('approvalToolName');
@@ -2549,6 +3328,11 @@
     let pendingToolApproval = null;
     let queuedSocketAction = null;
     let planMode = false;
+    let voiceRecognition = null;
+    let voiceActive = false;
+    let voiceReplyArmed = false;
+    let voiceRecommendation = null;
+    let launchHidden = false;
 
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const WS_CANDIDATES = [
@@ -2998,6 +3782,24 @@
           key: '',
           terms: 'audit approvals cancelled tools safety history',
           run: () => runToolCommand('workspace', 'tool_audit', { limit: 30 }, 'Loading tool audit trail')
+        },
+        {
+          id: 'voice',
+          icon: 'V',
+          title: 'Voice mode',
+          meta: 'Talk to Locus through macOS speech services when available',
+          key: '',
+          terms: 'voice microphone speech transcription talk',
+          run: startVoiceMode
+        },
+        {
+          id: 'create-file',
+          icon: '+',
+          title: 'Create a file',
+          meta: 'Create a local workspace file with approval preview',
+          key: '',
+          terms: 'create file write local',
+          run: createLocalFileFromPrompt
         },
         {
           id: 'uploads',
@@ -3454,6 +4256,38 @@
       return card;
     }
 
+    function applySurfacePlacement(placement) {
+      const value = ['center', 'top', 'bottom'].includes(placement) ? placement : 'center';
+      document.body.dataset.placement = value;
+      try { localStorage.setItem('locus.surfacePlacement', value); } catch (_) {}
+      renderPlacementControl(value);
+    }
+
+    function renderPlacementControl(current = document.body.dataset.placement || 'center') {
+      if (!placementControl) return;
+      const options = [
+        ['center', 'Center', 'Default floating command surface.'],
+        ['top', 'Top', 'Closer to the menu bar.'],
+        ['bottom', 'Bottom', 'Closer to the Dock.']
+      ];
+      placementControl.innerHTML = '';
+      options.forEach(([value, label, copy]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `autonomy-option${value === current ? ' active' : ''}`;
+        const name = document.createElement('span');
+        name.className = 'autonomy-name';
+        name.textContent = label;
+        const desc = document.createElement('span');
+        desc.className = 'autonomy-copy';
+        desc.textContent = copy;
+        button.appendChild(name);
+        button.appendChild(desc);
+        button.addEventListener('click', () => applySurfacePlacement(value));
+        placementControl.appendChild(button);
+      });
+    }
+
     function renderSettingsCenter(runtimePayload = {}, recommendation = {}, automationPayload = {}) {
       const runtime = runtimePayload.runtime || runtimePayload || {};
       const budget = runtimePayload.resource_budget || recommendation.resource_budget || {};
@@ -3478,6 +4312,10 @@
         .map(([role, model]) => `${role}: ${model}`)
         .join(' · ');
       settingsModels.textContent = roleText || 'Model recommendation unavailable.';
+      if (voiceRecommendation && voiceRecommendation.transcription) {
+        settingsModels.textContent += ` · voice: ${voiceRecommendation.transcription.recommended_model} (${voiceRecommendation.transcription.estimated_ram_gb} GB est.)`;
+      }
+      renderPlacementControl(document.body.dataset.placement || 'center');
       settingsAutomations.textContent = automations.length
         ? `${automations.length} local automation(s) defined.`
         : 'No local automations are defined yet.';
@@ -3485,11 +4323,13 @@
 
     async function loadSettingsCenter() {
       try {
-        const [runtimePayload, recommendation, automationPayload] = await Promise.all([
+        const [runtimePayload, recommendation, automationPayload, voicePayload] = await Promise.all([
           fetch('/api/runtime').then(res => res.json()),
           fetch('/api/models/recommendation').then(res => res.json()),
-          fetch('/api/automations').then(res => res.json())
+          fetch('/api/automations').then(res => res.json()),
+          fetch('/api/voice/recommendation').then(res => res.json())
         ]);
+        voiceRecommendation = voicePayload;
         renderSettingsCenter(runtimePayload, recommendation, automationPayload);
       } catch (_) {
         settingsSummary.textContent = 'Settings unavailable';
@@ -3719,6 +4559,138 @@
       showShortcutToast();
     }
 
+    function focusLocusSurface() {
+      if (launchVeil && !launchHidden) {
+        launchVeil.style.display = 'none';
+        launchHidden = true;
+      }
+      if (setupComplete) {
+        setupJustRan = false;
+        setupPanel.classList.remove('show');
+      }
+      queryInput.focus();
+      queryInput.select();
+    }
+
+    function locusShouldPoof() {
+      const blankPrompt = !queryInput.value.trim() && !commandInput.value.trim();
+      const blankAnswer = !String(answerEl.textContent || '').trim();
+      const overlayOpen = [commandPalette, pluginCenter, safetyCenter, settingsCenter, toolApproval, voiceOverlay]
+        .some(el => el && el.classList.contains('show'));
+      return blankPrompt && blankAnswer && !running && !overlayOpen;
+    }
+
+    function createLocalFileFromPrompt() {
+      closeCommandPalette();
+      const path = window.prompt('File path inside this folder', 'notes/locus-note.md');
+      if (!path) return;
+      const content = window.prompt('Initial file contents', '# New Locus note\\n');
+      if (content === null) return;
+      runToolCommand('filesystem', 'write_file', { path, content, backup: true }, `Create ${path}`);
+    }
+
+    function startAppContext() {
+      runToolCommand('workspace', 'connector_status', {}, 'Reading available app-control tools');
+    }
+
+    function showVoiceOverlay(status, note) {
+      voiceStatus.textContent = status || 'Listening...';
+      voiceNote.textContent = note || 'Uses macOS speech when available. Local voice models stay off until enabled.';
+      voiceOverlay.classList.add('show');
+      voiceOverlay.setAttribute('aria-hidden', 'false');
+      voiceBtn.classList.add('active');
+    }
+
+    function hideVoiceOverlay() {
+      voiceOverlay.classList.remove('show');
+      voiceOverlay.setAttribute('aria-hidden', 'true');
+      voiceBtn.classList.remove('active');
+    }
+
+    function stopVoiceMode({ keepText = true } = {}) {
+      voiceActive = false;
+      if (voiceRecognition) {
+        try { voiceRecognition.stop(); } catch (_) {}
+      }
+      voiceRecognition = null;
+      if (!keepText) queryInput.value = '';
+      hideVoiceOverlay();
+      queryInput.focus();
+    }
+
+    function startVoiceMode() {
+      closeCommandPalette();
+      if (voiceActive) {
+        stopVoiceMode();
+        return;
+      }
+      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const rec = voiceRecommendation && voiceRecommendation.transcription;
+      const recText = rec
+        ? `${rec.recommended_model} is the recommended local voice model when enabled.`
+        : 'Local voice model recommendation unavailable.';
+      voiceReplyArmed = true;
+      if (!Recognition) {
+        showVoiceOverlay('Voice preview', `This WebView does not expose live speech recognition. ${recText}`);
+        return;
+      }
+      voiceRecognition = new Recognition();
+      voiceRecognition.continuous = false;
+      voiceRecognition.interimResults = true;
+      voiceRecognition.lang = navigator.language || 'en-US';
+      let finalText = '';
+      voiceRecognition.onstart = () => {
+        voiceActive = true;
+        showVoiceOverlay('Listening...', recText);
+      };
+      voiceRecognition.onresult = (event) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          const transcript = event.results[i][0] ? event.results[i][0].transcript : '';
+          if (event.results[i].isFinal) finalText += transcript;
+          else interim += transcript;
+        }
+        const combined = `${finalText} ${interim}`.trim();
+        if (combined) {
+          queryInput.value = combined;
+          voiceStatus.textContent = combined;
+        }
+      };
+      voiceRecognition.onerror = (event) => {
+        voiceActive = false;
+        showVoiceOverlay('Voice needs permission', event.error ? `macOS reported: ${event.error}. ${recText}` : recText);
+      };
+      voiceRecognition.onend = () => {
+        voiceActive = false;
+        if (queryInput.value.trim()) {
+          hideVoiceOverlay();
+          sendQuery(queryInput.value.trim());
+        } else {
+          showVoiceOverlay('No speech detected', recText);
+          setTimeout(() => {
+            if (!voiceActive) hideVoiceOverlay();
+          }, 1400);
+        }
+      };
+      try {
+        voiceRecognition.start();
+      } catch (_) {
+        showVoiceOverlay('Voice unavailable', recText);
+      }
+    }
+
+    function speakBack(text) {
+      if (!voiceReplyArmed || !window.speechSynthesis) return;
+      const clean = String(text || '').replace(/[#*_`>\\[\\]()]/g, '').trim();
+      if (!clean) return;
+      const utterance = new SpeechSynthesisUtterance(clean.slice(0, 420));
+      utterance.rate = 0.96;
+      utterance.pitch = 1;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+      voiceReplyArmed = false;
+    }
+
     function escapeHtml(value) {
       return String(value || '')
         .replace(/&/g, '&amp;')
@@ -3882,6 +4854,7 @@
         addThinkingLine(`Done in ${meta.elapsed_ms} ms using ${meta.sources_used || 0} sources${runSuffix}`);
         stopSpinners();
       }
+      speakBack(answerMarkdown);
       loadRunHistory();
     }
 
@@ -4134,6 +5107,12 @@
       }
 
       try {
+        voiceRecommendation = await fetch('/api/voice/recommendation').then(res => res.json());
+      } catch (_) {
+        voiceRecommendation = null;
+      }
+
+      try {
         const payload = await fetch('/api/uploads').then(res => res.json());
         renderUploads(payload.uploads || []);
       } catch (_) {
@@ -4184,7 +5163,7 @@
         reader.onload = () => {
           const result = String(reader.result || '');
           resolve({
-            name: file.name,
+            name: file.webkitRelativePath || file.name,
             size: file.size,
             type: file.type,
             content_b64: result.includes(',') ? result.split(',', 2)[1] : result
@@ -4195,13 +5174,13 @@
       });
     }
 
-    async function uploadSelectedFiles() {
-      if (!ws || ws.readyState !== WebSocket.OPEN || !fileInput.files.length) return;
-      const files = Array.from(fileInput.files);
+    async function uploadSelectedFiles(input = fileInput) {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !input.files.length) return;
+      const files = Array.from(input.files);
       addThinkingLine(`Uploading ${files.length} file(s)`);
       const payloads = await Promise.all(files.map(readFileAsPayload));
       ws.send(JSON.stringify({ type: 'upload', data: { files: payloads } }));
-      fileInput.value = '';
+      input.value = '';
     }
 
     function saveRamBudget() {
@@ -4357,7 +5336,17 @@
     sendBtn.addEventListener('click', () => sendQuery());
     planModeBtn.addEventListener('click', () => setPlanMode(!planMode));
     uploadBtn.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', uploadSelectedFiles);
+    filesBtn.addEventListener('click', () => fileInput.click());
+    clipBtn.addEventListener('click', () => fileInput.click());
+    imageBtn.addEventListener('click', () => fileInput.click());
+    folderBtn.addEventListener('click', () => folderInput.click());
+    createFileBtn.addEventListener('click', createLocalFileFromPrompt);
+    modelMenuBtn.addEventListener('click', openSettingsCenter);
+    appsContextBtn.addEventListener('click', startAppContext);
+    voiceBtn.addEventListener('click', startVoiceMode);
+    voiceStopBtn.addEventListener('click', () => stopVoiceMode());
+    fileInput.addEventListener('change', () => uploadSelectedFiles(fileInput));
+    folderInput.addEventListener('change', () => uploadSelectedFiles(folderInput));
     saveRamBtn.addEventListener('click', saveRamBudget);
     setupRunBtn.addEventListener('click', runSetup);
     consoleSetupBtn.addEventListener('click', openSetupSurface);
@@ -4460,6 +5449,11 @@
         queryInput.focus();
         return;
       }
+      if (event.key === 'Escape' && voiceOverlay.classList.contains('show')) {
+        event.preventDefault();
+        stopVoiceMode();
+        return;
+      }
       if (event.key === 'Escape' && setupPanel.classList.contains('show') && setupComplete) {
         setupJustRan = false;
         setupPanel.classList.remove('show');
@@ -4490,8 +5484,31 @@
       }
     });
 
+    const surfaceMode = new URLSearchParams(location.search).get('surface') || '';
+    if (surfaceMode) document.body.classList.add(`surface-${surfaceMode}`);
+    try {
+      document.body.dataset.placement = localStorage.getItem('locus.surfacePlacement') || 'center';
+    } catch (_) {
+      document.body.dataset.placement = 'center';
+    }
+    if (surfaceMode === 'launch') {
+      launchVeil.style.display = 'grid';
+    } else {
+      setTimeout(() => {
+        if (launchVeil) {
+          launchVeil.style.display = 'none';
+          launchHidden = true;
+        }
+      }, 2700);
+    }
+
     queryInput.focus();
     window.openLocusCommandPalette = openCommandPalette;
+    window.openSettingsCenter = openSettingsCenter;
+    window.openPluginCenter = openPluginCenter;
+    window.openSafetyCenter = openSafetyCenter;
+    window.focusLocusSurface = focusLocusSurface;
+    window.locusShouldPoof = locusShouldPoof;
     loadStatusPanels();
     connectSocket();
   </script>

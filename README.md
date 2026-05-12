@@ -37,6 +37,10 @@ run.sh "goal"
 run_dashboard.sh
   └─ scripts/ui_server.py          ← dashboard + websocket at http://localhost:8765
        └─ dashboard/index.html     ← live agent view
+
+run_app.sh
+  ├─ scripts/ui_server.py          ← local dashboard server
+  └─ scripts/locus_macos_app.py    ← macOS menu-bar overlay host
 ```
 
 ---
@@ -74,6 +78,12 @@ LOCAL_COMPUTER_AUTO_INSTALL_MODELS=0 LOCAL_COMPUTER_AUTO_INSTALL_OLLAMA=0 ./run.
 ```powershell
 $env:LOCAL_COMPUTER_AUTO_INSTALL_MODELS="0"; $env:LOCAL_COMPUTER_AUTO_INSTALL_OLLAMA="0"; .\run.ps1
 ```
+
+On macOS, `install_dock_app.sh` builds `~/Applications/Locus.app` as a menu-bar
+accessory app, installs a login item, and opens Locus in a floating translucent
+overlay instead of a browser tab. Option+Space summons the overlay; a quick
+double-Command press is also wired as a summon gesture when Accessibility/Input
+Monitoring permissions allow it.
 
 The app is written for non-technical users: setup starts automatically, shows
 plain-language progress, and avoids command-line-only instructions during normal
@@ -116,8 +126,8 @@ implemented tools, and risk labels. Plugin enable/disable state is persisted in
 ## App Icons
 
 The committed Locus icon set lives under `assets/icons/`. The source artwork is
-a lotus-flower mark made from layered petal shapes for a softer lilac system
-identity.
+a neutral glass lotus mark made from layered petal shapes for a macOS-style
+system identity.
 
 - `assets/icons/locus-app-icon.svg` is the editable source artwork.
 - `assets/icons/locus-app-icon-1024.png` is the high-resolution preview/export.

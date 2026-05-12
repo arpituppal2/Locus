@@ -34,20 +34,20 @@ def draw_locus_icon(size: int = 1024) -> Image.Image:
     def width(value: int) -> int:
         return max(1, round(value * scale))
 
-    bg = Image.new("RGBA", (size, size), (21, 10, 34, 255))
+    bg = Image.new("RGBA", (size, size), (15, 17, 16, 255))
     bg_draw = ImageDraw.Draw(bg)
     for y in range(size):
         t = y / max(1, size - 1)
-        r = round(21 + 26 * (1 - t))
-        g = round(10 + 10 * (1 - t))
-        b = round(34 + 50 * (1 - t))
+        r = round(15 + 34 * (1 - t))
+        g = round(17 + 36 * (1 - t))
+        b = round(16 + 30 * (1 - t))
         bg_draw.line((0, y, size, y), fill=(r, g, b, 255))
 
     glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     glow_draw = ImageDraw.Draw(glow)
-    glow_draw.ellipse(box((124, 86, 910, 840)), fill=(192, 132, 252, 74))
-    glow_draw.ellipse(box((386, 230, 928, 956)), fill=(240, 171, 252, 52))
-    glow_draw.ellipse(box((86, 516, 514, 970)), fill=(129, 140, 248, 44))
+    glow_draw.ellipse(box((124, 86, 910, 840)), fill=(237, 246, 239, 58))
+    glow_draw.ellipse(box((386, 230, 928, 956)), fill=(119, 215, 207, 44))
+    glow_draw.ellipse(box((86, 516, 514, 970)), fill=(245, 199, 131, 34))
     glow = glow.filter(ImageFilter.GaussianBlur(width(76)))
     canvas.alpha_composite(bg)
     canvas.alpha_composite(glow)
@@ -57,13 +57,13 @@ def draw_locus_icon(size: int = 1024) -> Image.Image:
         draw.rounded_rectangle(
             box((inset, inset, 1024 - inset, 1024 - inset)),
             radius=width(150 - i * 22),
-            outline=(216, 180, 254, alpha),
+            outline=(237, 246, 239, alpha),
             width=width(3),
         )
 
     # Subtle water line and lotus base.
-    draw.ellipse(box((154, 704, 870, 850)), fill=(99, 102, 241, 42), outline=(196, 181, 253, 46), width=width(3))
-    draw.arc(box((174, 662, 850, 874)), 8, 172, fill=(240, 171, 252, 72), width=width(6))
+    draw.ellipse(box((154, 704, 870, 850)), fill=(111, 135, 124, 46), outline=(237, 246, 239, 42), width=width(3))
+    draw.arc(box((174, 662, 850, 874)), 8, 172, fill=(119, 215, 207, 62), width=width(6))
 
     def petal(cx: int, cy: int, w: int, h: int, angle: float, fill: tuple[int, int, int, int], outline: tuple[int, int, int, int]) -> None:
         layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -81,26 +81,26 @@ def draw_locus_icon(size: int = 1024) -> Image.Image:
         canvas.alpha_composite(rotated)
 
     # Back row: football-like petals.
-    petal(512, 422, 194, 412, 0, (168, 85, 247, 226), (244, 214, 255, 124))
-    petal(392, 480, 184, 396, -30, (192, 132, 252, 224), (244, 214, 255, 116))
-    petal(632, 480, 184, 396, 30, (192, 132, 252, 224), (244, 214, 255, 116))
-    petal(294, 584, 164, 356, -58, (129, 140, 248, 218), (216, 180, 254, 105))
-    petal(730, 584, 164, 356, 58, (129, 140, 248, 218), (216, 180, 254, 105))
+    petal(512, 422, 194, 412, 0, (203, 216, 207, 226), (247, 247, 242, 124))
+    petal(392, 480, 184, 396, -30, (174, 191, 181, 224), (247, 247, 242, 116))
+    petal(632, 480, 184, 396, 30, (174, 191, 181, 224), (247, 247, 242, 116))
+    petal(294, 584, 164, 356, -58, (143, 163, 154, 218), (237, 246, 239, 105))
+    petal(730, 584, 164, 356, 58, (143, 163, 154, 218), (237, 246, 239, 105))
 
     # Front row.
-    petal(442, 642, 176, 330, -18, (232, 121, 249, 236), (250, 232, 255, 138))
-    petal(582, 642, 176, 330, 18, (232, 121, 249, 236), (250, 232, 255, 138))
-    petal(512, 678, 166, 292, 0, (250, 208, 255, 242), (255, 255, 255, 142))
+    petal(442, 642, 176, 330, -18, (238, 243, 233, 236), (255, 255, 255, 138))
+    petal(582, 642, 176, 330, 18, (238, 243, 233, 236), (255, 255, 255, 138))
+    petal(512, 678, 166, 292, 0, (247, 247, 242, 242), (255, 255, 255, 142))
 
     center_glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     center_draw = ImageDraw.Draw(center_glow)
-    center_draw.ellipse(box((418, 600, 606, 790)), fill=(250, 204, 255, 62))
+    center_draw.ellipse(box((418, 600, 606, 790)), fill=(245, 199, 131, 58))
     center_glow = center_glow.filter(ImageFilter.GaussianBlur(width(32)))
     canvas.alpha_composite(center_glow)
 
     draw.ellipse(box((456, 634, 568, 746)), fill=(255, 245, 196, 245), outline=(255, 255, 255, 170), width=width(5))
     draw.ellipse(box((492, 670, 532, 710)), fill=(255, 255, 247, 255))
-    draw.line(box((512, 746, 512, 842)), fill=(196, 181, 253, 142), width=width(10))
+    draw.line(box((512, 746, 512, 842)), fill=(215, 238, 232, 142), width=width(10))
 
     mask = rounded_mask(size, width(212))
     shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -117,24 +117,24 @@ def write_svg() -> None:
     svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Locus lotus app icon">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2f1454"/>
-      <stop offset=".58" stop-color="#150a22"/>
-      <stop offset="1" stop-color="#100718"/>
+      <stop offset="0" stop-color="#30352f"/>
+      <stop offset=".58" stop-color="#171a16"/>
+      <stop offset="1" stop-color="#0f1110"/>
     </linearGradient>
     <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="18"/></filter>
   </defs>
   <rect x="48" y="48" width="928" height="928" rx="212" fill="url(#bg)"/>
-  <ellipse cx="512" cy="486" rx="344" ry="300" fill="#c084fc" opacity=".18" filter="url(#soft)"/>
-  <ellipse cx="512" cy="780" rx="358" ry="72" fill="#818cf8" opacity=".22"/>
-  <g stroke="#fae8ff" stroke-width="7" stroke-opacity=".5">
-    <ellipse cx="512" cy="422" rx="97" ry="206" fill="#a855f7" transform="rotate(0 512 422)"/>
-    <ellipse cx="392" cy="480" rx="92" ry="198" fill="#c084fc" transform="rotate(-30 392 480)"/>
-    <ellipse cx="632" cy="480" rx="92" ry="198" fill="#c084fc" transform="rotate(30 632 480)"/>
-    <ellipse cx="294" cy="584" rx="82" ry="178" fill="#818cf8" transform="rotate(-58 294 584)"/>
-    <ellipse cx="730" cy="584" rx="82" ry="178" fill="#818cf8" transform="rotate(58 730 584)"/>
-    <ellipse cx="442" cy="642" rx="88" ry="165" fill="#e879f9" transform="rotate(-18 442 642)"/>
-    <ellipse cx="582" cy="642" rx="88" ry="165" fill="#e879f9" transform="rotate(18 582 642)"/>
-    <ellipse cx="512" cy="678" rx="83" ry="146" fill="#f5d0fe"/>
+  <ellipse cx="512" cy="486" rx="344" ry="300" fill="#edf6ef" opacity=".16" filter="url(#soft)"/>
+  <ellipse cx="512" cy="780" rx="358" ry="72" fill="#77d7cf" opacity=".18"/>
+  <g stroke="#f7f7f2" stroke-width="7" stroke-opacity=".58">
+    <ellipse cx="512" cy="422" rx="97" ry="206" fill="#cbd8cf" transform="rotate(0 512 422)"/>
+    <ellipse cx="392" cy="480" rx="92" ry="198" fill="#aebfb5" transform="rotate(-30 392 480)"/>
+    <ellipse cx="632" cy="480" rx="92" ry="198" fill="#aebfb5" transform="rotate(30 632 480)"/>
+    <ellipse cx="294" cy="584" rx="82" ry="178" fill="#8fa39a" transform="rotate(-58 294 584)"/>
+    <ellipse cx="730" cy="584" rx="82" ry="178" fill="#8fa39a" transform="rotate(58 730 584)"/>
+    <ellipse cx="442" cy="642" rx="88" ry="165" fill="#eef3e9" transform="rotate(-18 442 642)"/>
+    <ellipse cx="582" cy="642" rx="88" ry="165" fill="#eef3e9" transform="rotate(18 582 642)"/>
+    <ellipse cx="512" cy="678" rx="83" ry="146" fill="#f7f7f2"/>
   </g>
   <circle cx="512" cy="690" r="56" fill="#fff1a8" stroke="#fff" stroke-opacity=".66" stroke-width="5"/>
   <circle cx="512" cy="690" r="20" fill="#fffef2"/>

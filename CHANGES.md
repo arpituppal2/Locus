@@ -1,5 +1,16 @@
 ## CHANGES.md
 
+### Native Mac menu-bar overlay
+- Reworked the macOS app wrapper into a menu-bar accessory app with a floating transparent WebKit panel.
+- Added a full-screen launch veil, menu-bar status item, Option+Space and double-Command summon hooks, and click-away poof/back behavior.
+- Added microphone and speech-recognition usage descriptions for Voice Mode.
+
+### Apple-style command surface
+- Removed the purple visual system in favor of neutral glass, graphite, sage, ivory, and warm accent tones.
+- Rebuilt the main task surface around a translucent command bar with 3D icon buttons for app context, folders, files, attachments, file creation, models, Plan Mode, and Voice Mode.
+- Added Voice Mode UI with macOS speech hooks, local voice model recommendations, live transcript fill, and speech playback without starting local models by default.
+- Added overlay placement settings for center, top, and bottom positions.
+
 ### Lotus logo and setup overlay polish
 - Replaced the dashboard's rounded-square badge with a transparent layered lotus logo.
 - Added `assets/icons/locus-logo.svg` as the standalone Locus logo source.

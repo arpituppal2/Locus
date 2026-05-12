@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # install_dock_app.sh
-# Creates a real macOS .app bundle that wraps run_app.sh
-# and optionally adds it to the Dock.
+# Creates a real macOS menu-bar .app bundle that wraps run_app.sh.
 #
 # Usage:  bash install_dock_app.sh
 # The app is placed in ~/Applications/Locus.app
@@ -11,6 +10,7 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAME="Locus"
 APP_DIR="$HOME/Applications/$APP_NAME.app"
+LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.locus.local.app.plist"
 
 echo "==> Building $APP_DIR"
 
@@ -28,12 +28,19 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key>  <string>com.locus.local.app</string>
   <key>CFBundleName</key>        <string>Locus</string>
   <key>CFBundleDisplayName</key> <string>Locus</string>
+  <key>CFBundlePackageType</key> <string>APPL</string>
   <key>CFBundleVersion</key>     <string>1.0</string>
   <key>CFBundleExecutable</key>  <string>launcher</string>
   <key>CFBundleIconFile</key>    <string>AppIcon</string>
-  <key>LSUIElement</key>         <false/>
+  <key>LSUIElement</key>         <true/>
   <key>NSHighResolutionCapable</key> <true/>
   <key>NSPrincipalClass</key>    <string>NSApplication</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Locus uses the microphone only when you start Voice Mode.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Locus can transcribe your voice locally through macOS speech services when available.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Locus uses automation only for local app-control tools you approve.</string>
 </dict>
 </plist>
 PLIST
@@ -57,24 +64,32 @@ cp "$ICON_ICNS" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 echo "==> App built: $APP_DIR"
 
-# ── add to Dock ────────────────────────────────────────────────────────────
-echo "==> Adding to Dock..."
-defaults write com.apple.dock persistent-apps -array-add \
-  "<dict>\
-    <key>tile-data</key>\
-    <dict>\
-      <key>file-data</key>\
-      <dict>\
-        <key>_CFURLString</key><string>$APP_DIR</string>\
-        <key>_CFURLStringType</key><integer>0</integer>\
-      </dict>\
-    </dict>\
-  </dict>"
+# ── launch at login so Locus lives in the menu bar ─────────────────────────
+mkdir -p "$(dirname "$LAUNCH_AGENT")"
+cat > "$LAUNCH_AGENT" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.locus.local.app</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/open</string>
+    <string>-a</string>
+    <string>$APP_DIR</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+</dict>
+</plist>
+PLIST
 
-killall Dock
+launchctl unload "$LAUNCH_AGENT" >/dev/null 2>&1 || true
+launchctl load "$LAUNCH_AGENT" >/dev/null 2>&1 || true
 
 echo ""
 echo "✓  Locus.app installed to ~/Applications/"
-echo "✓  Added to your Dock (Dock will restart briefly)"
+echo "✓  Locus now runs as a menu-bar app and starts at login"
 echo ""
-echo "Double-click the Dock icon — or run:  open \"$APP_DIR\""
+echo "Open it now with:  open \"$APP_DIR\""
