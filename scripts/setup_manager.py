@@ -135,6 +135,8 @@ def _missing_modules(python: Path | None = None) -> list[str]:
 
 def _playwright_chromium_ready(python: Path | None = None) -> bool:
     python = python or Path(sys.executable)
+    if _ci_mode():
+        return True
     code = """
 from pathlib import Path
 from playwright.sync_api import sync_playwright

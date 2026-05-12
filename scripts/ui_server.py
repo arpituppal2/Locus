@@ -885,7 +885,7 @@ async def _process_request(path: str, request_headers):
         )
 
     if request_path == "/api/setup":
-        payload = json.dumps(setup_status()).encode("utf-8")
+        payload = json.dumps(await asyncio.to_thread(setup_status)).encode("utf-8")
         return (
             HTTPStatus.OK,
             [
@@ -896,10 +896,14 @@ async def _process_request(path: str, request_headers):
         )
 
     if request_path == "/api/permissions":
+        full_disk_access, accessibility = await asyncio.gather(
+            asyncio.to_thread(full_disk_access_status),
+            asyncio.to_thread(accessibility_status),
+        )
         payload = json.dumps(
             {
-                "full_disk_access": full_disk_access_status(),
-                "accessibility": accessibility_status(),
+                "full_disk_access": full_disk_access,
+                "accessibility": accessibility,
             }
         ).encode("utf-8")
         return (
