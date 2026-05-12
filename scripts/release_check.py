@@ -227,15 +227,21 @@ def _check_dashboard_frontend_no_model() -> None:
             page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
             page.goto(f"http://127.0.0.1:{port}", wait_until="domcontentloaded", timeout=15000)
             page.wait_for_selector("text=Local models off", timeout=12000)
-            page.wait_for_selector("text=Frontend readiness", timeout=12000)
+            page.wait_for_selector("text=Set up Locus", timeout=12000)
             body_text = page.locator("body").inner_text(timeout=8000)
-            for text in [
-                "Local models off",
-                "Plugins",
-                "model files optional",
-                "work without downloaded models",
-            ]:
-                _assert(text in body_text, f"dashboard missing model-free frontend text: {text}")
+            body_lower = body_text.lower()
+            for text in ["local models off", "set up locus"]:
+                _assert(text in body_lower, f"dashboard missing model-free frontend text: {text}")
+            _assert(
+                "model files are optional" in body_lower or "model assets optional" in body_lower,
+                "dashboard did not expose optional model-file setup copy",
+            )
+            _assert(
+                "frontend readiness" in body_lower
+                or "works before ollama" in body_lower
+                or "work before model files exist" in body_lower,
+                "dashboard did not expose model-free readiness or first-run setup copy",
+            )
             conversation_text = page.locator("#conversationSummary").text_content(timeout=5000) or ""
             _assert(
                 "conversation" in conversation_text.lower() or "message(s) saved" in conversation_text,
